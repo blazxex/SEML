@@ -1,0 +1,32 @@
+# Data
+pandas>=2.2.2
+numpy>=1.26.4
+pyarrow>=17.0.0
+
+# NLP / ML
+vaderSentiment>=3.3.2
+transformers>=4.41.2
+torch>=2.3.1
+openai>=1.30.1
+scikit-learn>=1.5.0
+scipy>=1.13.1
+langdetect>=1.0.9
+
+# Experiment Tracking
+mlflow>=2.13.2
+
+# Web Dashboard
+flask>=3.0.3
+gunicorn>=22.0.0
+
+# Auth + Database
+bcrypt>=4.1.0
+supabase>=2.4.0
+flask-login>=0.6.3
+
+# Pipeline orchestration
+apache-airflow>=2.9.0
+
+# Utilities
+tqdm>=4.66.4
+python-dotenv>=1.0.1

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stock Sentiment Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <style>
+        .sim-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1rem 1.25rem; }
+        .sim-status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        .sim-status.running { background: #3fb950; animation: pulse 1.2s infinite; }
+        .sim-status.paused  { background: #e3b341; }
+        .sim-status.finished{ background: #58a6ff; }
+        .sim-status.idle    { background: #6e7681; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .live-badge { font-size: 0.7rem; background:#3fb950; color:#0d1117; padding:2px 7px; border-radius:20px; vertical-align:middle; }
+        .nav-tabs .nav-link { color: #8b949e; border-color: transparent; }
+        .nav-tabs .nav-link.active { color: #c9d1d9; background: #161b22; border-color: #30363d #30363d #161b22; }
+        .nav-tabs { border-bottom-color: #30363d; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-4 py-2 mb-3 d-flex justify-content-between">
+    <span class="navbar-brand fw-bold fs-5">📈 Stock Sentiment Dashboard</span>
+    <div class="d-flex align-items-center gap-3">
+        <span class="text-secondary small">{{ username }}</span>
+        <a href="/logout" class="btn btn-sm btn-outline-secondary">Logout</a>
+    </div>
+</nav>
+
+<div class="container-fluid px-4">
+
+    <!-- Mode tabs -->
+    <ul class="nav nav-tabs mb-3" id="modeTabs">
+        <li class="nav-item">
+            <a class="nav-link active" id="tab-historical" href="#" onclick="switchMode('historical')">Historical</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="tab-live" href="#" onclick="switchMode('live')">
+                Live Simulation <span class="live-badge ms-1">LIVE</span>
+            </a>
+        </li>
+    </ul>
+
+    <!-- Controls row -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <label class="form-label text-secondary small">Ticker</label>
+            <select class="form-select" id="tickerSelect" onchange="loadData()">
+                <option value="AAPL">AAPL — Apple Inc.</option>
+                <option value="TSLA">TSLA — Tesla Inc.</option>
+                <option value="TSM">TSM — TSMC</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label text-secondary small">Model</label>
+            <select class="form-select" id="modelSelect" onchange="onModelChange()">
+                {% for model in models %}
+                <option value="{{ model }}">{{ model.upper() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3" id="smoothingCol">
+            <label class="form-label text-secondary small">Sentiment Smoothing</label>
+            <select class="form-select" id="smoothingSelect" onchange="loadData()">
+                <option value="daily">Daily (raw)</option>
+                <option value="3day">3-Day Rolling Average</option>
+                <option value="7day">7-Day Rolling Average</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Simulation controls (shown only in live mode) -->
+    <div id="simControls" class="sim-card mb-3" style="display:none;">
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+            <div>
+                <span class="sim-status idle" id="simDot"></span>
+                <span id="simStatusText" class="text-secondary small">—</span>
+                <span class="text-secondary small ms-2" id="simProgress"></span>
+            </div>
+            <div class="d-flex gap-2 ms-auto">
+                <button class="btn btn-sm btn-success" onclick="simAction('start')">▶ Start</button>
+                <button class="btn btn-sm btn-warning" onclick="simAction('pause')">⏸ Pause</button>
+                <button class="btn btn-sm btn-danger" onclick="simAction('reset')">↺ Reset</button>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <label class="text-secondary small mb-0">Speed (sec/batch):</label>
+                <input type="number" id="speedInput" class="form-control form-control-sm" style="width:80px;" min="5" max="300" value="30" />
+                <button class="btn btn-sm btn-secondary" onclick="setSpeed()">Set</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drift alert -->
+    <div class="alert-drift mb-3" id="driftBanner"></div>
+    <div class="alert alert-danger mb-3" id="errorBanner" style="display:none;background:#3a0a0a;border-color:#ff4444;color:#ff9999;"></div>
+
+    <!-- Charts -->
+    <div class="row g-3 mb-3">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header" id="sentimentChartTitle">Sentiment Score vs. Close Price</div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="sentimentChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card h-100">
+                <div class="card-header">Metrics</div>
+                <div class="card-body metrics-panel" id="metricsPanel">
+                    <div class="metric-row">
+                        <span class="metric-label">Select a model and ticker</span>
+                        <span class="metric-value">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">Daily Sentiment Distribution (Buy / Hold / Sell / No Opinion %)</div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="distributionChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<footer>
+    <strong>For informational purposes only. Not financial advice.</strong>
+    &nbsp;|&nbsp; Data: Sept 2021 – Sept 2022 (static, historical).
+    Simulation replays test split. Correlation ≠ causation.
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+let currentMode = 'historical';
+let autoRefreshTimer = null;
+
+function switchMode(mode) {
+    currentMode = mode;
+    document.getElementById('tab-historical').classList.toggle('active', mode === 'historical');
+    document.getElementById('tab-live').classList.toggle('active', mode === 'live');
+    document.getElementById('simControls').style.display = mode === 'live' ? 'block' : 'none';
+    document.getElementById('smoothingCol').style.display = mode === 'live' ? 'none' : 'block';
+
+    if (mode === 'live') {
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+    }
+    loadData();
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(() => {
+        loadData();
+        pollSimState();
+    }, 10000);
+    pollSimState();
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+function getModel() { return document.getElementById('modelSelect').value; }
+function getTicker() { return document.getElementById('tickerSelect').value; }
+
+function onModelChange() {
+    loadData();
+    if (currentMode === 'live') pollSimState();
+}
+
+async function loadData() {
+    const ticker = getTicker();
+    const model  = getModel();
+
+    document.getElementById('errorBanner').style.display = 'none';
+
+    try {
+        if (currentMode === 'live') {
+            await loadLiveData(ticker, model);
+        } else {
+            await loadHistoricalData(ticker, model);
+        }
+    } catch(e) {
+        showError('Failed to load data: ' + e.message);
+    }
+}
+
+async function loadHistoricalData(ticker, model) {
+    const smoothing = document.getElementById('smoothingSelect').value;
+    const res = await fetch(`/api/sentiment?ticker=${ticker}&model=${model}`);
+    if (!res.ok) { const d = await res.json(); showError(d.error); return; }
+    const data = await res.json();
+
+    const labels = { daily: 'Daily', '3day': '3-Day Rolling', '7day': '7-Day Rolling' };
+    document.getElementById('sentimentChartTitle').textContent =
+        `Sentiment Score (${labels[smoothing]}) vs. Close Price`;
+
+    buildSentimentChart(data.dates, data.sentiment_score,
+        data.rolling_3day_sentiment, data.rolling_7day_sentiment, data.close_price, smoothing);
+    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct);
+    updateMetrics(data);
+    loadDrift(ticker, model);
+}
+
+async function loadLiveData(ticker, model) {
+    const res = await fetch(`/api/live?ticker=${ticker}&model=${model}`);
+    if (!res.ok) { const d = await res.json(); showError(d.error || 'Live data error'); return; }
+    const data = await res.json();
+
+    document.getElementById('sentimentChartTitle').textContent = `[LIVE] Sentiment Score — ${model.toUpperCase()}`;
+    if (data.dates.length === 0) {
+        showError('No live data yet. Start the simulation.');
+        return;
+    }
+    buildSentimentChart(data.dates, data.sentiment_score, null, null, null, 'daily');  // live: no rolling, no price
+    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct);
+    updateMetrics(data);
+}
+
+async function loadDrift(ticker, model) {
+    const res = await fetch(`/api/drift?ticker=${ticker}&model=${model}`);
+    if (!res.ok) return;
+    const d = await res.json();
+    const banner = document.getElementById('driftBanner');
+    if (d.any_active) {
+        const flags = ['drift_flag','volume_spike_flag','weak_signal_flag','divergence_flag']
+            .filter(f => d[f].some(Boolean))
+            .map(f => f.replace('_flag','').replace(/_/g,' '));
+        banner.textContent = `⚠ Drift detected: ${flags.join(', ')}`;
+        banner.style.display = 'block';
+    } else {
+        banner.textContent = '';
+        banner.style.display = 'none';
+    }
+}
+
+function updateMetrics(data) {
+    const panel = document.getElementById('metricsPanel');
+    if (!data.dates || data.dates.length === 0) { panel.innerHTML = '<p class="text-secondary small">No data.</p>'; return; }
+    const scores = data.sentiment_score.filter(v => v !== null);
+    const avg = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(4) : '—';
+    panel.innerHTML = `
+        <div class="metric-row"><span class="metric-label">Dates</span><span class="metric-value">${data.dates[0]} → ${data.dates[data.dates.length-1]}</span></div>
+        <div class="metric-row"><span class="metric-label">Data points</span><span class="metric-value">${data.dates.length}</span></div>
+        <div class="metric-row"><span class="metric-label">Avg sentiment</span><span class="metric-value">${avg}</span></div>
+        <div class="metric-row"><span class="metric-label">Total tweets</span><span class="metric-value">${(data.tweet_volume||[]).filter(Boolean).reduce((a,b)=>a+b,0)}</span></div>
+    `;
+}
+
+// Simulation controls
+async function simAction(action) {
+    const model = getModel();
+    const res = await fetch(`/api/sim/${action}`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({model})
+    });
+    const d = await res.json();
+    pollSimState();
+}
+
+async function setSpeed() {
+    const model = getModel();
+    const seconds = parseInt(document.getElementById('speedInput').value) || 30;
+    await fetch('/api/sim/speed', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({model, seconds})
+    });
+}
+
+async function pollSimState() {
+    const model = getModel();
+    const res = await fetch(`/api/sim/state?model=${model}`);
+    if (!res.ok) return;
+    const s = await res.json();
+    if (!s.status) return;
+
+    const dot = document.getElementById('simDot');
+    const txt = document.getElementById('simStatusText');
+    const prog = document.getElementById('simProgress');
+
+    dot.className = 'sim-status ' + s.status;
+    txt.textContent = s.status.charAt(0).toUpperCase() + s.status.slice(1);
+    if (s.position !== undefined) {
+        prog.textContent = `(${s.position} tweets processed)`;
+    }
+    document.getElementById('speedInput').value = s.speed_seconds || 30;
+}
+
+function showError(msg) {
+    const b = document.getElementById('errorBanner');
+    b.textContent = msg;
+    b.style.display = 'block';
+}
+
+// Init
+loadData();
+</script>
+</body>
+</html>
