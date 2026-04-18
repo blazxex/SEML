@@ -1,0 +1,15 @@
+FROM apache/airflow:2.9.3-python3.11
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+USER airflow
+# Install torch CPU-only first (large package — separate layer for better caching)
+RUN pip install --no-cache-dir --timeout 300 --retries 5 \
+    torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining project deps (airflow already in base image — excluded)
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 5 \
+    -r /tmp/requirements-airflow.txt

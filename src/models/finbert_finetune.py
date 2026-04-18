@@ -160,7 +160,6 @@ class FinBERTFineTuner:
             logging_steps           = 100,
             seed                    = 42,
             fp16                    = torch.cuda.is_available(),
-            use_mps_device          = torch.backends.mps.is_available(),
             dataloader_num_workers  = 0,
         )
 

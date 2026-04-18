@@ -1,5 +1,4 @@
 import os
-import glob
 from pathlib import Path
 from functools import wraps
 
@@ -16,8 +15,33 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
-RESULTS_DIR = Path(__file__).parent.parent / "results"
-MODELS = ["vader", "finbert", "gpt"]
+RESULTS_DIR  = Path(__file__).parent.parent / "results"
+DATA_DIR     = Path(__file__).parent.parent / "cleaned_data"
+# Discover available models dynamically from results files
+MODELS       = ["vader", "finbert", "finbert_finetuned", "gpt"]
+
+COMPANY_NAMES    = {"AAPL": "Apple Inc.", "TSLA": "Tesla, Inc.", "TSM": "Taiwan Semiconductor"}
+MODEL_DISPLAY    = {
+    "vader":             "VADER (Rule-based)",
+    "finbert":           "FinBERT (Base)",
+    "finbert_finetuned": "FinBERT (Fine-tuned)",
+    "gpt":               "GPT-4o-mini",
+}
+
+
+def _safe(v):
+    """Convert numpy scalars / NaN to JSON-safe Python types."""
+    if v is None:
+        return None
+    try:
+        import math
+        if math.isnan(float(v)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(v, "item"):
+        return v.item()
+    return v
 
 
 def _load_csv(name: str) -> pd.DataFrame | None:
@@ -27,16 +51,46 @@ def _load_csv(name: str) -> pd.DataFrame | None:
     return None
 
 
-# Cache aggregated + drift data at startup
+# ── Cache aggregated + drift data at startup ───────────────────────
 _aggregated: dict[str, pd.DataFrame] = {}
 _drift: dict[str, pd.DataFrame] = {}
 
+
+def _load_from_supabase(table: str, model: str) -> pd.DataFrame | None:
+    """Fallback: load a model's data from Supabase when local CSV is missing."""
+    try:
+        from dashboard.supabase_client import get_client
+        db = get_client()
+        rows = db.table(table).select("*").eq("model", model).execute().data or []
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df["trading_date"] = pd.to_datetime(df["trading_date"])
+        if table == "aggregated_results":
+            df.rename(columns={
+                "close_price": "Close",
+                "daily_return": "Daily Return %",
+                "intraday_trend": "Intraday Trend",
+                "rolling_3day_sentiment": "rolling_3day_sentiment",
+                "rolling_7day_sentiment": "rolling_7day_sentiment",
+            }, inplace=True)
+        return df
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Supabase fallback failed for %s/%s: %s", table, model, e)
+        return None
+
+
 for _model in MODELS:
     _df = _load_csv(f"aggregated_{_model}.csv")
+    if _df is None:
+        _df = _load_from_supabase("aggregated_results", _model)
     if _df is not None:
         _aggregated[_model] = _df
 
     _dd = _load_csv(f"drift_flags_{_model}.csv")
+    if _dd is None:
+        _dd = _load_from_supabase("drift_flags", _model)
     if _dd is not None:
         _drift[_model] = _dd
 
@@ -44,6 +98,12 @@ _comparison: dict = {}
 _agreement_path = RESULTS_DIR / "inter_model_agreement.csv"
 if _agreement_path.exists():
     _comparison["agreement"] = pd.read_csv(_agreement_path).to_dict(orient="records")
+
+# ── Cache cleaned price data (OHLCV) ──────────────────────────────
+_prices: pd.DataFrame | None = None
+_price_path = DATA_DIR / "cleaned_stock_prices.csv"
+if _price_path.exists():
+    _prices = pd.read_csv(_price_path, parse_dates=["Date"])
 
 
 def login_required(f):
@@ -87,7 +147,9 @@ def logout():
 @login_required
 def index():
     available_models = list(_aggregated.keys()) or MODELS
-    return render_template("index.html", models=available_models, username=session.get("username"))
+    model_labels = {m: MODEL_DISPLAY.get(m, m.upper()) for m in available_models}
+    return render_template("index.html", models=available_models,
+                           model_labels=model_labels, username=session.get("username"))
 
 
 # ------------------------------------------------------------------
@@ -265,6 +327,88 @@ def api_live():
         "tweet_volume": [_clean(r["tweet_volume"]) for r in rows],
     }
     return jsonify(payload)
+
+
+# ------------------------------------------------------------------
+# Day detail API — powers the click-through summary panel
+# ------------------------------------------------------------------
+
+@app.route("/api/day")
+@login_required
+def api_day():
+    ticker = request.args.get("ticker", "AAPL").upper()
+    date   = request.args.get("date", "")
+
+    if not date:
+        return jsonify({"error": "date required"}), 400
+
+    target = pd.to_datetime(date)
+    result: dict = {
+        "ticker":  ticker,
+        "date":    date,
+        "company": COMPANY_NAMES.get(ticker, ticker),
+        "date_formatted": target.strftime("%A, %b %d, %Y"),
+        "price":   None,
+        "models":  {},
+        "drift":   {},
+    }
+
+    # OHLCV price data
+    if _prices is not None:
+        pr = _prices[(_prices["Stock Name"] == ticker) & (_prices["Date"] == target)]
+        if not pr.empty:
+            r = pr.iloc[0]
+            result["price"] = {
+                "open":          _safe(r.get("Open")),
+                "high":          _safe(r.get("High")),
+                "low":           _safe(r.get("Low")),
+                "close":         _safe(r.get("Close")),
+                "adj_close":     _safe(r.get("Adj Close")),
+                "volume":        _safe(r.get("Volume")),
+                "daily_return":  _safe(r.get("Daily Return %")),
+                "intraday_trend": int(r.get("Intraday Trend", 0)),
+            }
+
+    # Sentiment per model
+    for model, df in _aggregated.items():
+        row = df[(df["ticker"] == ticker) & (df["trading_date"] == target)]
+        if row.empty:
+            continue
+        r = row.iloc[0]
+        result["models"][model] = {
+            "tweet_volume":    _safe(r.get("tweet_volume")),
+            "buy_count":       _safe(r.get("buy_count")),
+            "sell_count":      _safe(r.get("sell_count")),
+            "hold_count":      _safe(r.get("hold_count")),
+            "no_opinion_count":_safe(r.get("no_opinion_count")),
+            "buy_pct":         _safe(r.get("buy_pct")),
+            "sell_pct":        _safe(r.get("sell_pct")),
+            "hold_pct":        _safe(r.get("hold_pct")),
+            "no_opinion_pct":  _safe(r.get("no_opinion_pct")),
+            "sentiment_score": _safe(r.get("sentiment_score")),
+            "rolling_3day":    _safe(r.get("rolling_3day_sentiment")),
+            "rolling_7day":    _safe(r.get("rolling_7day_sentiment")),
+        }
+
+    # Drift flags per model
+    for model, df in _drift.items():
+        row = df[(df["ticker"] == ticker) & (df["trading_date"] == target)]
+        if row.empty:
+            continue
+        r = row.iloc[0]
+        flags = {
+            "drift_flag":        bool(r.get("drift_flag", False)),
+            "volume_spike_flag": bool(r.get("volume_spike_flag", False)),
+            "weak_signal_flag":  bool(r.get("weak_signal_flag", False)),
+            "divergence_flag":   bool(r.get("divergence_flag", False)),
+        }
+        flags["any"] = any(flags.values())
+        result["drift"][model] = flags
+
+    if not result["models"]:
+        return jsonify({"error": "No data for this date."}), 404
+
+    return jsonify(result)
 
 
 if __name__ == "__main__":

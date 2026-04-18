@@ -44,3 +44,43 @@ on conflict (model) do nothing;
 -- Index for fast dashboard queries
 create index if not exists idx_sim_results_ticker_model on sim_results(ticker, model);
 create index if not exists idx_sim_results_created on sim_results(created_at desc);
+
+-- Historical aggregated sentiment results (from pipeline CSV files)
+create table if not exists aggregated_results (
+    id bigserial primary key,
+    model text not null,
+    ticker text not null,
+    trading_date date not null,
+    tweet_volume float,
+    buy_count float,
+    sell_count float,
+    hold_count float,
+    no_opinion_count float,
+    buy_pct float,
+    sell_pct float,
+    hold_pct float,
+    no_opinion_pct float,
+    sentiment_score float,
+    rolling_3day_sentiment float,
+    rolling_7day_sentiment float,
+    close_price float,
+    daily_return float,
+    intraday_trend int,
+    unique (model, ticker, trading_date)
+);
+
+-- Historical drift flags
+create table if not exists drift_flags (
+    id bigserial primary key,
+    model text not null,
+    ticker text not null,
+    trading_date date not null,
+    drift_flag boolean default false,
+    volume_spike_flag boolean default false,
+    weak_signal_flag boolean default false,
+    divergence_flag boolean default false,
+    unique (model, ticker, trading_date)
+);
+
+create index if not exists idx_agg_ticker_model on aggregated_results(ticker, model);
+create index if not exists idx_drift_ticker_model on drift_flags(ticker, model);

@@ -6,22 +6,10 @@
     <title>Stock Sentiment Dashboard</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
-    <style>
-        .sim-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1rem 1.25rem; }
-        .sim-status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
-        .sim-status.running { background: #3fb950; animation: pulse 1.2s infinite; }
-        .sim-status.paused  { background: #e3b341; }
-        .sim-status.finished{ background: #58a6ff; }
-        .sim-status.idle    { background: #6e7681; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-        .live-badge { font-size: 0.7rem; background:#3fb950; color:#0d1117; padding:2px 7px; border-radius:20px; vertical-align:middle; }
-        .nav-tabs .nav-link { color: #8b949e; border-color: transparent; }
-        .nav-tabs .nav-link.active { color: #c9d1d9; background: #161b22; border-color: #30363d #30363d #161b22; }
-        .nav-tabs { border-bottom-color: #30363d; }
-    </style>
 </head>
 <body>
 
+<!-- ── Navbar ────────────────────────────────────────────────── -->
 <nav class="navbar navbar-dark px-4 py-2 mb-3 d-flex justify-content-between">
     <span class="navbar-brand fw-bold fs-5">📈 Stock Sentiment Dashboard</span>
     <div class="d-flex align-items-center gap-3">
@@ -35,10 +23,10 @@
     <!-- Mode tabs -->
     <ul class="nav nav-tabs mb-3" id="modeTabs">
         <li class="nav-item">
-            <a class="nav-link active" id="tab-historical" href="#" onclick="switchMode('historical')">Historical</a>
+            <a class="nav-link active" id="tab-historical" href="#" onclick="switchMode('historical');return false;">Historical</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link" id="tab-live" href="#" onclick="switchMode('live')">
+            <a class="nav-link" id="tab-live" href="#" onclick="switchMode('live');return false;">
                 Live Simulation <span class="live-badge ms-1">LIVE</span>
             </a>
         </li>
@@ -58,7 +46,7 @@
             <label class="form-label text-secondary small">Model</label>
             <select class="form-select" id="modelSelect" onchange="onModelChange()">
                 {% for model in models %}
-                <option value="{{ model }}">{{ model.upper() }}</option>
+                <option value="{{ model }}">{{ model_labels[model] }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -70,9 +58,15 @@
                 <option value="7day">7-Day Rolling Average</option>
             </select>
         </div>
+        <div class="col-md-3 d-flex align-items-end" id="clickHintCol">
+            <div class="click-hint">
+                <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="opacity:.6"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1a6 6 0 1 1 0 12A6 6 0 0 1 8 2zm-.5 4.5v3h-2l2.5 2.5 2.5-2.5h-2v-3h-1z"/></svg>
+                Click any point on the chart for a day summary
+            </div>
+        </div>
     </div>
 
-    <!-- Simulation controls (shown only in live mode) -->
+    <!-- Simulation controls -->
     <div id="simControls" class="sim-card mb-3" style="display:none;">
         <div class="d-flex flex-wrap gap-3 align-items-center">
             <div>
@@ -101,11 +95,12 @@
     <div class="row g-3 mb-3">
         <div class="col-lg-8">
             <div class="card">
-                <div class="card-header" id="sentimentChartTitle">Sentiment Score vs. Close Price</div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span id="sentimentChartTitle">Sentiment Score vs. Close Price</span>
+                    <span class="text-secondary" style="font-size:.75rem;font-weight:400;">Click any point for day detail</span>
+                </div>
                 <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="sentimentChart"></canvas>
-                    </div>
+                    <div class="chart-container"><canvas id="sentimentChart"></canvas></div>
                 </div>
             </div>
         </div>
@@ -127,9 +122,7 @@
             <div class="card">
                 <div class="card-header">Daily Sentiment Distribution (Buy / Hold / Sell / No Opinion %)</div>
                 <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="distributionChart"></canvas>
-                    </div>
+                    <div class="chart-container"><canvas id="distributionChart"></canvas></div>
                 </div>
             </div>
         </div>
@@ -139,9 +132,22 @@
 
 <footer>
     <strong>For informational purposes only. Not financial advice.</strong>
-    &nbsp;|&nbsp; Data: Sept 2021 – Sept 2022 (static, historical).
-    Simulation replays test split. Correlation ≠ causation.
+    &nbsp;|&nbsp; Data: Sept 2021 – Sept 2022 (static, historical). Correlation ≠ causation.
 </footer>
+
+<!-- ── Day Detail Offcanvas ───────────────────────────────────── -->
+<div class="offcanvas offcanvas-end day-panel" id="dayPanel" tabindex="-1" data-bs-backdrop="false" data-bs-scroll="true">
+    <div class="offcanvas-header day-panel-header">
+        <div>
+            <div class="day-panel-ticker" id="dpTicker">—</div>
+            <div class="day-panel-date text-secondary small" id="dpDate">—</div>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body p-0" id="dayPanelBody">
+        <div class="text-secondary text-center py-5 px-3" id="dpPlaceholder">Loading…</div>
+    </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -156,29 +162,21 @@ function switchMode(mode) {
     document.getElementById('tab-live').classList.toggle('active', mode === 'live');
     document.getElementById('simControls').style.display = mode === 'live' ? 'block' : 'none';
     document.getElementById('smoothingCol').style.display = mode === 'live' ? 'none' : 'block';
-
-    if (mode === 'live') {
-        startAutoRefresh();
-    } else {
-        stopAutoRefresh();
-    }
+    document.getElementById('clickHintCol').style.display = mode === 'live' ? 'none' : 'flex';
+    if (mode === 'live') { startAutoRefresh(); } else { stopAutoRefresh(); }
     loadData();
 }
 
 function startAutoRefresh() {
     stopAutoRefresh();
-    autoRefreshTimer = setInterval(() => {
-        loadData();
-        pollSimState();
-    }, 10000);
+    autoRefreshTimer = setInterval(() => { loadData(); pollSimState(); }, 10000);
     pollSimState();
 }
-
 function stopAutoRefresh() {
     if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
 }
 
-function getModel() { return document.getElementById('modelSelect').value; }
+function getModel()  { return document.getElementById('modelSelect').value; }
 function getTicker() { return document.getElementById('tickerSelect').value; }
 
 function onModelChange() {
@@ -187,20 +185,12 @@ function onModelChange() {
 }
 
 async function loadData() {
-    const ticker = getTicker();
-    const model  = getModel();
-
+    const ticker = getTicker(), model = getModel();
     document.getElementById('errorBanner').style.display = 'none';
-
     try {
-        if (currentMode === 'live') {
-            await loadLiveData(ticker, model);
-        } else {
-            await loadHistoricalData(ticker, model);
-        }
-    } catch(e) {
-        showError('Failed to load data: ' + e.message);
-    }
+        if (currentMode === 'live') { await loadLiveData(ticker, model); }
+        else                        { await loadHistoricalData(ticker, model); }
+    } catch(e) { showError('Failed to load data: ' + e.message); }
 }
 
 async function loadHistoricalData(ticker, model) {
@@ -209,13 +199,13 @@ async function loadHistoricalData(ticker, model) {
     if (!res.ok) { const d = await res.json(); showError(d.error); return; }
     const data = await res.json();
 
-    const labels = { daily: 'Daily', '3day': '3-Day Rolling', '7day': '7-Day Rolling' };
+    const labels = { daily:'Daily', '3day':'3-Day Rolling', '7day':'7-Day Rolling' };
     document.getElementById('sentimentChartTitle').textContent =
         `Sentiment Score (${labels[smoothing]}) vs. Close Price`;
 
     buildSentimentChart(data.dates, data.sentiment_score,
-        data.rolling_3day_sentiment, data.rolling_7day_sentiment, data.close_price, smoothing);
-    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct);
+        data.rolling_3day_sentiment, data.rolling_7day_sentiment, data.close_price, smoothing, ticker);
+    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct, ticker);
     updateMetrics(data);
     loadDrift(ticker, model);
 }
@@ -224,14 +214,10 @@ async function loadLiveData(ticker, model) {
     const res = await fetch(`/api/live?ticker=${ticker}&model=${model}`);
     if (!res.ok) { const d = await res.json(); showError(d.error || 'Live data error'); return; }
     const data = await res.json();
-
     document.getElementById('sentimentChartTitle').textContent = `[LIVE] Sentiment Score — ${model.toUpperCase()}`;
-    if (data.dates.length === 0) {
-        showError('No live data yet. Start the simulation.');
-        return;
-    }
-    buildSentimentChart(data.dates, data.sentiment_score, null, null, null, 'daily');  // live: no rolling, no price
-    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct);
+    if (data.dates.length === 0) { showError('No live data yet. Start the simulation.'); return; }
+    buildSentimentChart(data.dates, data.sentiment_score, null, null, null, 'daily', ticker);
+    buildDistributionChart(data.dates, data.buy_pct, data.hold_pct, data.sell_pct, data.no_opinion_pct, ticker);
     updateMetrics(data);
 }
 
@@ -244,10 +230,9 @@ async function loadDrift(ticker, model) {
         const flags = ['drift_flag','volume_spike_flag','weak_signal_flag','divergence_flag']
             .filter(f => d[f].some(Boolean))
             .map(f => f.replace('_flag','').replace(/_/g,' '));
-        banner.textContent = `⚠ Drift detected: ${flags.join(', ')}`;
+        banner.innerHTML = `⚠ Drift detected: ${flags.join(' &nbsp;|&nbsp; ')}`;
         banner.style.display = 'block';
     } else {
-        banner.textContent = '';
         banner.style.display = 'none';
     }
 }
@@ -255,64 +240,58 @@ async function loadDrift(ticker, model) {
 function updateMetrics(data) {
     const panel = document.getElementById('metricsPanel');
     if (!data.dates || data.dates.length === 0) { panel.innerHTML = '<p class="text-secondary small">No data.</p>'; return; }
-    const scores = data.sentiment_score.filter(v => v !== null);
+    const scores = (data.sentiment_score || []).filter(v => v !== null);
     const avg = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(4) : '—';
+    const totalVol = (data.tweet_volume||[]).filter(Boolean).reduce((a,b)=>a+b,0);
+    const signal = interpretSignal(parseFloat(avg));
     panel.innerHTML = `
-        <div class="metric-row"><span class="metric-label">Dates</span><span class="metric-value">${data.dates[0]} → ${data.dates[data.dates.length-1]}</span></div>
-        <div class="metric-row"><span class="metric-label">Data points</span><span class="metric-value">${data.dates.length}</span></div>
-        <div class="metric-row"><span class="metric-label">Avg sentiment</span><span class="metric-value">${avg}</span></div>
-        <div class="metric-row"><span class="metric-label">Total tweets</span><span class="metric-value">${(data.tweet_volume||[]).filter(Boolean).reduce((a,b)=>a+b,0)}</span></div>
+        <div class="metric-row"><span class="metric-label">Period</span><span class="metric-value">${data.dates[0]} → ${data.dates[data.dates.length-1]}</span></div>
+        <div class="metric-row"><span class="metric-label">Data points</span><span class="metric-value">${data.dates.length} days</span></div>
+        <div class="metric-row"><span class="metric-label">Avg sentiment</span><span class="metric-value" style="color:${signal.color}">${avg}</span></div>
+        <div class="metric-row"><span class="metric-label">Signal</span><span class="metric-value" style="color:${signal.color}">${signal.icon} ${signal.label}</span></div>
+        <div class="metric-row"><span class="metric-label">Total tweets</span><span class="metric-value">${totalVol.toLocaleString()}</span></div>
+        <div class="metric-row mt-2"><span class="metric-label text-secondary" style="font-size:.75rem;">Click any chart point for a detailed day summary.</span></div>
     `;
+}
+
+function interpretSignal(score) {
+    if (isNaN(score)) return { label:'—', color:'#8b949e', icon:'→' };
+    if (score >  0.3) return { label:'Strong Bullish', color:'#3fb950', icon:'↑↑' };
+    if (score >  0.1) return { label:'Mild Bullish',   color:'#8adb88', icon:'↑'  };
+    if (score < -0.3) return { label:'Strong Bearish', color:'#f85149', icon:'↓↓' };
+    if (score < -0.1) return { label:'Mild Bearish',   color:'#ff9999', icon:'↓'  };
+    return { label:'Neutral', color:'#e3b341', icon:'→' };
 }
 
 // Simulation controls
 async function simAction(action) {
     const model = getModel();
-    const res = await fetch(`/api/sim/${action}`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({model})
-    });
-    const d = await res.json();
+    await fetch(`/api/sim/${action}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model}) });
     pollSimState();
 }
-
 async function setSpeed() {
-    const model = getModel();
-    const seconds = parseInt(document.getElementById('speedInput').value) || 30;
-    await fetch('/api/sim/speed', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({model, seconds})
-    });
+    const model = getModel(), seconds = parseInt(document.getElementById('speedInput').value)||30;
+    await fetch('/api/sim/speed', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model, seconds}) });
 }
-
 async function pollSimState() {
     const model = getModel();
     const res = await fetch(`/api/sim/state?model=${model}`);
     if (!res.ok) return;
     const s = await res.json();
     if (!s.status) return;
-
-    const dot = document.getElementById('simDot');
-    const txt = document.getElementById('simStatusText');
-    const prog = document.getElementById('simProgress');
-
+    const dot = document.getElementById('simDot'), txt = document.getElementById('simStatusText');
     dot.className = 'sim-status ' + s.status;
     txt.textContent = s.status.charAt(0).toUpperCase() + s.status.slice(1);
-    if (s.position !== undefined) {
-        prog.textContent = `(${s.position} tweets processed)`;
-    }
+    const prog = document.getElementById('simProgress');
+    if (s.position !== undefined) prog.textContent = `(${s.position} tweets processed)`;
     document.getElementById('speedInput').value = s.speed_seconds || 30;
 }
 
 function showError(msg) {
     const b = document.getElementById('errorBanner');
-    b.textContent = msg;
-    b.style.display = 'block';
+    b.textContent = msg; b.style.display = 'block';
 }
 
-// Init
 loadData();
 </script>
 </body>

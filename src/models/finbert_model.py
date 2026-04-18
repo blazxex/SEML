@@ -32,11 +32,13 @@ class FinBERTModel:
         processed_dir: str = "data/processed",
         batch_size: int = 32,
         confidence_threshold: float = CONFIDENCE_THRESHOLD,
-        model_name_or_path: str | None = None,   # pass fine-tuned path to use challenger
+        model_name_or_path: str | None = None,
+        model_key: str = "finbert",   # controls output filenames and MLflow run name
     ):
         self.processed_dir = Path(processed_dir)
         self.batch_size = batch_size
         self.confidence_threshold = confidence_threshold
+        self.model_key = model_key
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         source = model_name_or_path or MODEL_NAME
@@ -86,12 +88,12 @@ class FinBERTModel:
         log.info("FinBERT: classifying %d tweets …", len(test_df))
 
         with mlflow.start_run(
-            run_name="finbert",
+            run_name=self.model_key,
             nested=True,
             parent_run_id=mlflow_parent_run_id,
         ):
             mlflow.log_params({
-                "model_type": "finbert",
+                "model_type": self.model_key,
                 "dataset_split": "test",
                 "ticker_scope": "AAPL,TSLA,TSM",
                 "batch_size": self.batch_size,
@@ -119,7 +121,7 @@ class FinBERTModel:
             for key in ["label", "confidence", "positive_score", "negative_score", "neutral_score"]:
                 result_df[key] = [r[key] for r in all_results]
 
-            out_path = RESULTS_DIR / "finbert_results.csv"
+            out_path = RESULTS_DIR / f"{self.model_key}_results.csv"
             result_df.to_csv(out_path, index=False)
             mlflow.log_artifact(str(out_path))
 

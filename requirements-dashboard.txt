@@ -1,0 +1,10 @@
+pandas>=2.2.2
+numpy>=1.26.4
+flask>=3.0.3
+gunicorn>=22.0.0
+bcrypt>=4.1.0
+supabase>=2.4.0
+flask-login>=0.6.3
+vaderSentiment>=3.3.2
+python-dotenv>=1.0.1
+mlflow>=2.13.2

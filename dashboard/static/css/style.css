@@ -1,69 +1,277 @@
-/* Dark theme overrides */
+/* ── Base ──────────────────────────────────────────────────────── */
 body {
-    background-color: #121212;
+    background-color: #0d1117;
     color: #e0e0e0;
-    font-family: 'Segoe UI', sans-serif;
+    font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
-.navbar { background-color: #1e1e2e !important; }
+.navbar { background-color: #161b22 !important; border-bottom: 1px solid #30363d; }
 
+/* ── Cards ─────────────────────────────────────────────────────── */
 .card {
-    background-color: #1e1e2e;
-    border: 1px solid #2e2e4e;
+    background-color: #161b22;
+    border: 1px solid #30363d;
     border-radius: 8px;
 }
-
 .card-header {
-    background-color: #252540;
-    border-bottom: 1px solid #2e2e4e;
+    background-color: #1c2128;
+    border-bottom: 1px solid #30363d;
     font-weight: 600;
     color: #a0a0d0;
+    font-size: .9rem;
 }
 
-select.form-select, input.form-range {
-    background-color: #252540;
+/* ── Form controls ──────────────────────────────────────────────── */
+select.form-select, input.form-control {
+    background-color: #1c2128;
     color: #e0e0e0;
-    border: 1px solid #3e3e6e;
+    border: 1px solid #30363d;
+}
+select.form-select:focus, input.form-control:focus {
+    background-color: #1c2128;
+    color: #e0e0e0;
+    box-shadow: 0 0 0 0.2rem rgba(100,100,200,.35);
+    border-color: #58a6ff;
 }
 
-select.form-select:focus { box-shadow: 0 0 0 0.2rem rgba(100,100,200,0.4); }
+/* ── Tabs ───────────────────────────────────────────────────────── */
+.nav-tabs .nav-link          { color: #8b949e; border-color: transparent; }
+.nav-tabs .nav-link.active   { color: #c9d1d9; background: #161b22; border-color: #30363d #30363d #161b22; }
+.nav-tabs                    { border-bottom-color: #30363d; }
 
+/* ── Simulation card ────────────────────────────────────────────── */
+.sim-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 1rem 1.25rem; }
+.sim-status { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+.sim-status.running  { background:#3fb950; animation:pulse 1.2s infinite; }
+.sim-status.paused   { background:#e3b341; }
+.sim-status.finished { background:#58a6ff; }
+.sim-status.idle     { background:#6e7681; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+.live-badge { font-size:.7rem; background:#3fb950; color:#0d1117; padding:2px 7px; border-radius:20px; vertical-align:middle; }
+
+/* ── Drift banner ───────────────────────────────────────────────── */
 .alert-drift {
     background-color: #3a0a0a;
     border: 1px solid #ff4444;
     color: #ff9999;
     border-radius: 6px;
-    padding: 12px 16px;
+    padding: 10px 16px;
     display: none;
+    font-size: .875rem;
 }
 
-.alert-drift.active { display: block; }
-
-.metrics-panel {
-    background-color: #1a1a30;
-    border-radius: 8px;
-    padding: 16px;
-}
-
-.metrics-panel .metric-row {
+/* ── Metrics panel ──────────────────────────────────────────────── */
+.metrics-panel { padding: 4px; }
+.metric-row {
     display: flex;
     justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid #2a2a4a;
-    font-size: 0.9rem;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: .875rem;
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-label  { color: #8b949e; }
+.metric-value  { color: #79c0ff; font-weight: 600; text-align:right; }
+
+/* ── Chart container ────────────────────────────────────────────── */
+.chart-container { position:relative; height:300px; }
+
+/* ── Click hint ─────────────────────────────────────────────────── */
+.click-hint {
+    color: #6e7681;
+    font-size: .78rem;
+    padding-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
 }
 
-.metric-label { color: #9090b0; }
-.metric-value { color: #80d0ff; font-weight: 600; }
-
-.chart-container { position: relative; height: 300px; }
-
+/* ── Footer ─────────────────────────────────────────────────────── */
 footer {
-    background-color: #1a1a2a;
-    border-top: 1px solid #2e2e4e;
+    background-color: #161b22;
+    border-top: 1px solid #30363d;
     padding: 12px 0;
     text-align: center;
-    font-size: 0.8rem;
-    color: #707090;
+    font-size: .8rem;
+    color: #6e7681;
     margin-top: 40px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Day Detail Offcanvas Panel
+══════════════════════════════════════════════════════════════════ */
+.day-panel {
+    width: 520px !important;
+    background: #0d1117;
+    border-left: 1px solid #30363d;
+}
+.day-panel-header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 16px 20px;
+    align-items: flex-start;
+}
+.day-panel-ticker {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #e6edf3;
+    line-height: 1.3;
+}
+.day-panel-date { margin-top: 1px; }
+
+/* Section wrapper */
+.dp-section {
+    padding: 14px 20px;
+    border-bottom: 1px solid #21262d;
+}
+.dp-section:last-of-type { border-bottom: none; }
+.dp-section-title {
+    font-size: .7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: #6e7681;
+    margin-bottom: 10px;
+}
+
+/* ── Price card ─────────────────────────────────────────────────── */
+.dp-price-hero {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.dp-close-price {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #e6edf3;
+    line-height: 1;
+}
+.dp-return { font-size: 1.1rem; font-weight: 700; }
+.dp-badge {
+    font-size: .72rem;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 20px;
+}
+.dp-badge-green { background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.35); }
+.dp-badge-red   { background: rgba(248,81,73,.15);  color: #f85149; border: 1px solid rgba(248,81,73,.35); }
+
+.dp-ohlc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+.dp-ohlc-cell {
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 10px;
+    text-align: center;
+}
+.dp-ohlc-label { font-size: .68rem; color: #6e7681; margin-bottom: 3px; text-transform: uppercase; letter-spacing: .05em; }
+.dp-ohlc-val   { font-size: .9rem; font-weight: 600; color: #e6edf3; }
+
+/* ── Gauge ──────────────────────────────────────────────────────── */
+.dp-gauge-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+.dp-gauge-wrap {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+.dp-gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    width: 200px;
+    font-size: .68rem;
+    font-weight: 600;
+}
+.dp-gauge-stats { flex: 1; padding-top: 4px; }
+.dp-stat-score  { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+.dp-stat-label  { font-size: .85rem; font-weight: 700; margin-top: 2px; }
+.dp-stat-sub    { font-size: .78rem; color: #6e7681; margin-top: 4px; margin-bottom: 10px; }
+
+.dp-dist-bars { display: flex; flex-direction: column; gap: 6px; }
+.dp-dist-row  { display: flex; align-items: center; gap: 6px; }
+.dp-dist-label{ font-size: .72rem; color: #8b949e; width: 68px; flex-shrink: 0; }
+.dp-dist-track{ flex: 1; background: #21262d; border-radius: 3px; height: 8px; overflow: hidden; }
+.dp-dist-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.dp-dist-pct  { font-size: .72rem; color: #8b949e; width: 38px; text-align: right; flex-shrink: 0; }
+
+/* ── Sentiment meter ────────────────────────────────────────────── */
+.dp-meter-wrap   { padding: 4px 0; }
+.dp-meter-track  {
+    position: relative;
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(to right, #f85149, #e3b341, #3fb950);
+    margin-bottom: 6px;
+}
+.dp-meter-needle {
+    position: absolute;
+    top: -4px;
+    transform: translateX(-50%);
+    width: 3px;
+    height: 20px;
+    background: #ffffff;
+    border-radius: 2px;
+    box-shadow: 0 0 6px rgba(255,255,255,.5);
+}
+.dp-meter-ends {
+    display: flex;
+    justify-content: space-between;
+    font-size: .72rem;
+}
+.dp-meter-val { color: #e6edf3; font-weight: 700; }
+
+/* ── Rolling + Drift row ────────────────────────────────────────── */
+.dp-section-row { display: flex; gap: 20px; }
+.dp-half        { flex: 1; }
+
+.dp-kv {
+    display: flex;
+    justify-content: space-between;
+    font-size: .82rem;
+    padding: 3px 0;
+    border-bottom: 1px solid #21262d;
+    color: #8b949e;
+}
+.dp-kv span:last-child { color: #79c0ff; font-weight: 600; }
+
+.dp-drift-ok { color: #3fb950; font-size: .82rem; font-weight: 600; margin-top: 4px; }
+.dp-drift-flags { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.dp-flag { font-size: .75rem; padding: 3px 8px; border-radius: 4px; }
+.dp-flag-on  { background: rgba(248,81,73,.12);  color: #f85149; }
+.dp-flag-off { background: rgba(63,185,80,.08);  color: #3fb950; }
+
+/* ── Model comparison ───────────────────────────────────────────── */
+.dp-model-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+.dp-model-cell {
+    flex: 1;
+    min-width: 90px;
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+}
+.dp-model-name  { font-size: .68rem; color: #6e7681; font-weight: 700; letter-spacing: .06em; margin-bottom: 4px; }
+.dp-model-score { font-size: 1.2rem; font-weight: 700; }
+.dp-model-label { font-size: .7rem; font-weight: 600; margin-top: 2px; }
+
+/* ── Disclaimer ─────────────────────────────────────────────────── */
+.dp-disclaimer {
+    padding: 12px 20px;
+    font-size: .72rem;
+    color: #6e7681;
+    text-align: center;
+    border-top: 1px solid #21262d;
 }

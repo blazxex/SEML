@@ -24,8 +24,9 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Make project importable from DAG context
-PROJECT_ROOT = Path(__file__).parent.parent
+# Support both local (dags/../) and Docker (/opt/airflow/project) layouts
+_env_root = os.environ.get("AIRFLOW_PROJECT_ROOT")
+PROJECT_ROOT = Path(_env_root) if _env_root else Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from airflow import DAG

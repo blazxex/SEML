@@ -7,3 +7,7 @@ data/processed/
 results/
 *.egg-info/
 .DS_Store
+/venv
+logs/airflow/
+models/finbert_finetuned/
+airflow_home/

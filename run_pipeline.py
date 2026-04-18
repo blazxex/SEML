@@ -5,6 +5,10 @@ Usage:
     python run_pipeline.py --models vader finbert gpt --ticker all
     python run_pipeline.py --models vader --ticker AAPL
     python run_pipeline.py --models vader finbert gpt --skip_gpt False
+
+    # Fine-tune FinBERT on project data before running inference:
+    python run_pipeline.py --models finbert --finetune
+    python run_pipeline.py --models finbert --finetune --finetune_epochs 5
 """
 import argparse
 import logging
@@ -61,6 +65,19 @@ def parse_args():
         "--human_labels", default="human_labels/human_labels.csv",
         help="Path to human-labeled CSV for evaluation"
     )
+    p.add_argument(
+        "--finetune", action="store_true",
+        help="Fine-tune FinBERT on project data before running inference. "
+             "Saves to models/finbert_finetuned/best/. Ignored if finbert not in --models."
+    )
+    p.add_argument(
+        "--finetune_epochs", type=int, default=3,
+        help="Number of fine-tuning epochs (default: 3)"
+    )
+    p.add_argument(
+        "--finetune_batch_size", type=int, default=16,
+        help="Batch size for fine-tuning (default: 16)"
+    )
     return p.parse_args()
 
 
@@ -115,7 +132,61 @@ def main():
 
             elif model_name == "finbert":
                 from src.models.finbert_model import FinBERTModel
-                results = FinBERTModel(processed_dir=str(processed_dir)).run(parent_run_id)
+                finetuned_path = Path("models/finbert_finetuned/best")
+                if args.finetune:
+                    from src.models.finbert_finetune import FinBERTFineTuner
+                    log.info("=== Fine-tuning FinBERT (epochs=%d, batch=%d) ===",
+                             args.finetune_epochs, args.finetune_batch_size)
+                    tune_result = FinBERTFineTuner().run(
+                        epochs=args.finetune_epochs,
+                        batch_size=args.finetune_batch_size,
+                    )
+                    log.info("Fine-tune complete: val_f1=%.4f  model → %s",
+                             tune_result["f1"], tune_result["model_path"])
+                    # Run base finbert first, then fine-tuned as a separate model entry
+                    log.info("=== Running base FinBERT inference ===")
+                    results = FinBERTModel(
+                        processed_dir=str(processed_dir),
+                        model_key="finbert",
+                    ).run(parent_run_id)
+                    # Immediately aggregate + drift for base, then add fine-tuned below
+                    _base_agg  = aggregator.run(results, "finbert")
+                    drifter.run(_base_agg, "finbert")
+                    mlflow.log_artifact("results/aggregated_finbert.csv")
+                    mlflow.log_artifact("results/drift_flags_finbert.csv")
+
+                    log.info("=== Running fine-tuned FinBERT inference ===")
+                    results_ft = FinBERTModel(
+                        processed_dir=str(processed_dir),
+                        model_name_or_path=tune_result["model_path"],
+                        model_key="finbert_finetuned",
+                    ).run(parent_run_id)
+                    results_map["finbert_finetuned"] = results_ft
+                    model_name = "finbert_finetuned"   # let main loop aggregate this key
+                    results    = results_ft
+                elif finetuned_path.exists():
+                    log.info("Fine-tuned model found — running BOTH base and fine-tuned FinBERT.")
+                    results = FinBERTModel(
+                        processed_dir=str(processed_dir),
+                        model_key="finbert",
+                    ).run(parent_run_id)
+                    _base_agg = aggregator.run(results, "finbert")
+                    drifter.run(_base_agg, "finbert")
+
+                    results_ft = FinBERTModel(
+                        processed_dir=str(processed_dir),
+                        model_name_or_path=str(finetuned_path),
+                        model_key="finbert_finetuned",
+                    ).run(parent_run_id)
+                    results_map["finbert_finetuned"] = results_ft
+                    model_name = "finbert_finetuned"
+                    results    = results_ft
+                else:
+                    log.info("No fine-tuned model — using base ProsusAI/finbert.")
+                    results = FinBERTModel(
+                        processed_dir=str(processed_dir),
+                        model_key="finbert",
+                    ).run(parent_run_id)
 
             elif model_name == "gpt":
                 from src.models.gpt_model import GPTModel
