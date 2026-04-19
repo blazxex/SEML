@@ -1,0 +1,438 @@
+================================================================================
+  C4 ARCHITECTURE — STOCK SENTIMENT ANALYSIS SYSTEM
+================================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════
+  LEVEL 1 — SYSTEM CONTEXT DIAGRAM
+════════════════════════════════════════════════════════════════════════════════
+
+   [Retail Investor]   [ML Engineer]   [Data Engineer]   [System Admin]
+          |                  |                |                 |
+          | views dashboard  | runs CLI       | seeds data      | deploys Docker
+          | live simulation  | monitors       | monitors        | manages Airflow
+          |                  | MLflow         | preprocessing   |
+          v                  v                v                 v
+  +-----------------------------------------------------------------------+
+  |                                                                       |
+  |          STOCK SENTIMENT ANALYSIS SYSTEM                              |
+  |                                                                       |
+  |  Classifies tweet sentiment per ticker (AAPL/TSLA/TSM),              |
+  |  aggregates signals, detects drift, serves insights on               |
+  |  dashboard, and auto-retrains models when drift is detected.         |
+  |                                                                       |
+  +-----------------------------------------------------------------------+
+       |              |              |              |              |
+       | Supabase SDK | HTTPS        | HTTP         | HTTPS        | File I/O
+       v              v              v              v              v
+  +-----------+  +----------+  +---------+  +----------+  +-------------+
+  | Supabase  |  | Hugging  |  | Ollama  |  | OpenAI   |  | Static Data |
+  |           |  | Face Hub |  | (Local) |  | API      |  | Files       |
+  | Cloud DB  |  |          |  |         |  |          |  |             |
+  | users     |  | FinBERT  |  | gemma3  |  | GPT-4o   |  | tweets.csv  |
+  | results   |  | weights  |  | :4b     |  | -mini    |  | prices.csv  |
+  | drift     |  | ProsusAI |  | free    |  | ~$5-15   |  | labels.csv  |
+  | sim state |  | /finbert |  | local   |  | optional |  | 53k tweets  |
+  +-----------+  +----------+  +---------+  +----------+  +-------------+
+
+
+════════════════════════════════════════════════════════════════════════════════
+  LEVEL 2 — CONTAINER DIAGRAM
+════════════════════════════════════════════════════════════════════════════════
+
+  [Retail Investor] ----HTTPS:8080----> +---------------------------+
+  [ML Engineer]     ----Terminal------> |                           |
+  [ML Engineer]     ----Browser:5000--> |  STOCK SENTIMENT SYSTEM   |
+  [System Admin]    ----Browser:8082--> |                           |
+                                        +---------------------------+
+
+  +============================= SYSTEM BOUNDARY =============================+
+  |                                                                           |
+  |  +----------------------+        +-----------------------------+          |
+  |  |   Flask Dashboard    |        |   MLflow Tracking Server    |          |
+  |  |  Python 3.11         |        |   Python 3.11, MLflow 2.13  |          |
+  |  |  Flask 3.0, Gunicorn |        |                             |          |
+  |  |  Chart.js Bootstrap5 | -----> |   Experiment tracking       |          |
+  |  |                      |        |   Model registry            |          |
+  |  |  Web UI, auth,       |        |   Champion/Challenger        |          |
+  |  |  sentiment charts,   |        |   promotion                 |          |
+  |  |  drift alerts,       |        |   Port: 5000                |          |
+  |  |  live simulation     |        +-----------------------------+          |
+  |  |  Port: 8080          |                    ^                            |
+  |  +----------------------+                    | MLflow SDK                 |
+  |           |                                  |                            |
+  |           | Supabase SDK        +------------+------------+               |
+  |           |                     |                         |               |
+  |  +--------v---------+  +--------+----------+  +----------+----------+    |
+  |  |    Supabase      |  |  ML Pipeline (CLI)|  | Airflow Scheduler   |    |
+  |  |  (External)      |  |  Python 3.11      |  | Airflow 2.9.3       |    |
+  |  |                  |  |  PyTorch 2.3      |  | Python 3.11         |    |
+  |  |  users           |  |  Transformers 4.41|  |                     |    |
+  |  |  aggregated      |  |  scikit-learn     |  | Daily DAG 02:00 UTC |    |
+  |  |  drift_flags     |  |  pandas, MLflow   |  | drift check         |    |
+  |  |  sim_state       |  |                   |  | retrain FinBERT     |    |
+  |  |  sim_results     |  |  Preprocessing    |  | evaluate challenger |    |
+  |  +------------------+  |  VADER inference  |  | promote if better   |    |
+  |                         |  FinBERT infer.   |  +---------------------+    |
+  |                         |  GPT inference    |           |                 |
+  |                         |  Aggregation      |           | PostgreSQL      |
+  |                         |  Drift detection  |           v                 |
+  |                         |  Evaluation       |  +---------------------+    |
+  |                         |  MLflow logging   |  | Airflow Metadata DB |    |
+  |                         +-------------------+  | PostgreSQL 15       |    |
+  |                                  |             | DAG state, XCom     |    |
+  |                                  |             | task instances       |    |
+  |                                  v             +---------------------+    |
+  |                         +-------------------+                             |
+  |                         | Local File Store  |  +---------------------+    |
+  |                         | Parquet, CSV      |  | Airflow Webserver   |    |
+  |                         | mlruns/           |  | Airflow 2.9.3       |    |
+  |                         |                   |  | DAG UI, task logs   |    |
+  |                         | tweets_train/val  |  | manual triggers     |    |
+  |                         | /test.parquet     |  | Port: 8082          |    |
+  |                         | *_results.csv     |  +---------------------+    |
+  |                         | aggregated_*.csv  |                             |
+  |                         | drift_flags_*.csv |                             |
+  |                         +-------------------+                             |
+  |                                                                           |
+  +===========================================================================+
+
+  External dependencies:
+  ML Pipeline ----HTTPS----> [Hugging Face Hub]   (FinBERT weights)
+  ML Pipeline ----HTTP -----> [Ollama]             (LLM inference)
+  ML Pipeline ----HTTPS----> [OpenAI API]          (optional GPT-4o-mini)
+
+
+════════════════════════════════════════════════════════════════════════════════
+  LEVEL 3 — COMPONENT DIAGRAM  (ML Pipeline only)
+════════════════════════════════════════════════════════════════════════════════
+
+  +=========================================================================+
+  |  ML PIPELINE CONTAINER                                                  |
+  |                                                                         |
+  |  +------------------------------------------------------------------+   |
+  |  |  Pipeline Orchestrator  (run_pipeline.py)                        |   |
+  |  |  argparse, MLflow SDK                                            |   |
+  |  |  CLI entry point. Manages MLflow parent run + nested child runs. |   |
+  |  |  Flags: --models --finetune --finetune_epochs --finetune_batch   |   |
+  |  +------------------------------------------------------------------+   |
+  |       |         |          |           |          |         |            |
+  |    Phase1    Phase2      Phase2      Phase2     Phase3   Phase4/5        |
+  |       |         |          |           |          |         |            |
+  |       v         v          v           v          v         v            |
+  |  +--------+ +-------+ +--------+ +--------+ +--------+ +----------+     |
+  |  |Preproc | |VADER  | |FinBERT | |  GPT   | |Aggreg. | |Evaluation|     |
+  |  |Pipeline| |Model  | |Model   | |Model   | |Engine  | |Engine    |     |
+  |  +--------+ +-------+ +--------+ +--------+ +--------+ +----------+     |
+  |       |         |          |           |          ^         |            |
+  |       |         |          |    +-------+         |         |            |
+  |       |         |          |    |FinBERT|         |         |            |
+  |       |         |          +--->|FineTun|         |         |            |
+  |       |         |               +-------+         |         |            |
+  |       |         |                                 |         |            |
+  |  +--------+  +------------------------------------------+  |            |
+  |  |MLflow  |  |           Local File Store               |  |            |
+  |  |Client  |  +------------------------------------------+  |            |
+  |  +--------+                                                 |            |
+  |       |                                               +------------+     |
+  |       |                                               |Drift       |     |
+  |       v                                               |Detector    |     |
+  |  [MLflow Server]                                      +------------+     |
+  +=========================================================================+
+
+  Component Details:
+  +-----------------------+----------------------------------------------+
+  | Component             | Responsibility                               |
+  +-----------------------+----------------------------------------------+
+  | PreprocessingPipeline | Load CSVs, clean tweets, time-based 60/20/20|
+  |                       | split per ticker. Output: parquet files.     |
+  +-----------------------+----------------------------------------------+
+  | VADERModel            | Rule-based lexicon. compound→Buy/Hold/Sell.  |
+  |                       | batch=1000, ~5s, $0 cost.                    |
+  +-----------------------+----------------------------------------------+
+  | FinBERTModel          | ProsusAI/finbert transformer. softmax argmax.|
+  |                       | conf<0.6 → No Opinion. batch=32, CUDA/MPS.  |
+  +-----------------------+----------------------------------------------+
+  | FinBERTFineTuner      | Fine-tunes on silver (VADER) + gold labels   |
+  |                       | (200 human ×5). Early stop patience=2.       |
+  |   |                   |                                              |
+  |   +-> _TweetDataset   | PyTorch Dataset wrapper for tweet encodings. |
+  +-----------------------+----------------------------------------------+
+  | GPTModel              | 8-shot prompt → Ollama/OpenAI. batch=5.      |
+  |                       | Retry ×3 backoff. Checkpoint-resumes.        |
+  +-----------------------+----------------------------------------------+
+  | AggregationEngine     | Group by (ticker, date). Compute label dist, |
+  |                       | sentiment_score, 3d/7d rolling. Merge OHLCV. |
+  +-----------------------+----------------------------------------------+
+  | DriftDetector         | 4 signals: class shift>15pp, vol spike 3σ,   |
+  |                       | no_opinion>35%, price divergence 5+ days.    |
+  +-----------------------+----------------------------------------------+
+  | EvaluationEngine      | F1/accuracy/kappa on 200 gold labels.        |
+  |                       | Pearson r lags 0-3, bootstrap CI n=1000.     |
+  |                       | compare_models() picks best by priority.     |
+  +-----------------------+----------------------------------------------+
+  | MLflow Integration    | Logs params/metrics/artifacts in child runs. |
+  |                       | Registers + promotes champion to Production. |
+  +-----------------------+----------------------------------------------+
+
+  Data flow through components:
+
+  tweets.csv ─────────────────────────────────────────────────────────────┐
+  stock_prices.csv ──────────────────────────────────────────────────────┐|
+                                                                         ||
+  [PreprocessingPipeline]                                                ||
+       reads: tweets.csv, stock_prices.csv  <────────────────────────── +|
+       writes: tweets_train/val/test.parquet, prices_clean.parquet  <── +
+            |
+            v
+  [VADERModel]       reads: tweets_test.parquet
+                     writes: vader_results.csv
+  [FinBERTModel]     reads: tweets_test.parquet
+                     writes: finbert_results.csv
+  [FinBERTFineTuner] reads: tweets_train/val.parquet + human_labels
+                     writes: models/finbert_finetuned/best/
+       |
+       +-> [FinBERTModel (finetuned)]
+                     writes: finbert_finetuned_results.csv
+  [GPTModel]         reads: tweets_test.parquet
+                     writes: gpt_results.csv + checkpoint.csv
+            |
+            v
+  [AggregationEngine]
+       reads: *_results.csv, prices_clean.parquet
+       writes: aggregated_{model}.csv
+       computes: buy_pct, sell_pct, hold_pct, no_opinion_pct,
+                 sentiment_score=(buy-sell)/classified,
+                 rolling_3day_sentiment, rolling_7day_sentiment
+            |
+            v
+  [DriftDetector]
+       reads: aggregated_{model}.csv
+       writes: drift_flags_{model}.csv
+            |
+            v
+  [EvaluationEngine]
+       reads: *_results.csv, human_labels/lebeled.csv
+       writes: classification_report_{model}.txt
+       selects: best model by priority rules
+            |
+            v
+  [MLflow Integration]
+       registers: stock_sentiment_classifier
+       promotes:  champion → Production
+
+
+════════════════════════════════════════════════════════════════════════════════
+  LEVEL 4 — CODE DIAGRAM  (ML Components only)
+════════════════════════════════════════════════════════════════════════════════
+
+  CLASS STRUCTURE
+  ───────────────
+
+  +──────────────────────────────────+
+  │       PreprocessingPipeline      │
+  ├──────────────────────────────────┤
+  │ + data_dir: str                  │
+  │ + processed_dir: str             │
+  ├──────────────────────────────────┤
+  │ + run() -> dict                  │
+  │ - _load_prices() -> DataFrame    │
+  │ - _load_tweets() -> DataFrame    │
+  │ - _clean_tweet(text) -> str      │
+  │ - _is_english(text) -> bool      │
+  │ - _split(df) -> tuple            │
+  +──────────────────────────────────+
+
+  +──────────────────────────────────+    +──────────────────────────────────+
+  │          VADERModel              │    │          FinBERTModel             │
+  ├──────────────────────────────────┤    ├──────────────────────────────────┤
+  │ + processed_dir: str             │    │ + model_name_or_path: str         │
+  │ + batch_size: int = 1000         │    │ + batch_size: int = 32            │
+  ├──────────────────────────────────┤    │ + confidence_threshold: float=0.6 │
+  │ + run(parent_run_id) -> DataFrame│    │ + model_key: str                  │
+  │ - _classify_batch(texts) -> list │    │ + device: str  (CUDA>MPS>CPU)     │
+  │ - _map_label(compound,           │    ├──────────────────────────────────┤
+  │     token_count) -> tuple        │    │ + run(parent_run_id) -> DataFrame │
+  ├──────────────────────────────────┤    │ - _classify_batch(texts) -> list  │
+  │ Label mapping:                   │    │ - _load_model() -> void           │
+  │  compound >= 0.05  → Buy         │    ├──────────────────────────────────┤
+  │  compound <= -0.05 → Sell        │    │ Label mapping:                   │
+  │  |compound| < 0.05 → Hold        │    │  positive → Buy                  │
+  │  token_count < 3   → No Opinion  │    │  negative → Sell                 │
+  +──────────────────────────────────+    │  neutral  → Hold                 │
+                                          │  max_conf < 0.6 → No Opinion     │
+                                          +──────────────────────────────────+
+
+  +──────────────────────────────────+    +──────────────────────────────────+
+  │        FinBERTFineTuner          │    │         _TweetDataset             │
+  ├──────────────────────────────────┤    │         (PyTorch Dataset)         │
+  │ + processed_dir: str             │    ├──────────────────────────────────┤
+  │ + output_dir: str                │    │ + encodings: dict                 │
+  ├──────────────────────────────────┤    │ + labels: list                    │
+  │ + run(epochs, batch_size) -> dict│    ├──────────────────────────────────┤
+  │ - _build_training_df() ->        │    │ + __len__() -> int                │
+  │     DataFrame                    │    │ + __getitem__(idx) -> dict         │
+  │ - _compute_metrics(eval_pred)    │    │   returns: input_ids,             │
+  │     -> dict                      │    │            attention_mask,        │
+  ├──────────────────────────────────┤    │            token_type_ids,        │
+  │ Training data:                   │    │            labels                 │
+  │  Silver: VADER on train split    │    +──────────────────────────────────+
+  │          (~28k tweets)           │              created by
+  │  Gold:   human_labels × 5        │    FinBERTFineTuner ──creates──> _TweetDataset
+  │          (200 tweets oversampled)│    FinBERTFineTuner ──instantiates──> FinBERTModel
+  +──────────────────────────────────+
+
+  +──────────────────────────────────+
+  │            GPTModel              │
+  ├──────────────────────────────────┤
+  │ + batch_size: int = 5            │
+  │ + temperature: float = 0.0       │
+  │ + max_retries: int = 3           │
+  │ + ollama_model: str              │
+  │ + ollama_base_url: str           │
+  ├──────────────────────────────────┤
+  │ + run(parent_run_id) -> DataFrame│
+  │ - _call_api(tweets) -> tuple     │
+  │ - _parse_response(text,n) -> list│
+  │ - _build_user_message(tweets)    │
+  │     -> str                       │
+  ├──────────────────────────────────┤
+  │ Retry: exponential backoff 2^n   │
+  │ Checkpoint: saves per batch      │
+  │ Fallback: "No Opinion" on fail   │
+  +──────────────────────────────────+
+
+  +──────────────────────────────────+    +──────────────────────────────────+
+  │        AggregationEngine         │    │          DriftDetector            │
+  ├──────────────────────────────────┤    ├──────────────────────────────────┤
+  │ + processed_dir: str             │    │ + run(aggregated_df,              │
+  ├──────────────────────────────────┤    │       model_name) -> DataFrame    │
+  │ + run(results_df,                │    │ - _drift_flag(df) -> Series       │
+  │       model_name) -> DataFrame   │    │ - _volume_spike_flag(df) -> Series│
+  │ - _compute_label_distribution()  │    │ - _weak_signal_flag(df) -> Series │
+  │ - _compute_sentiment_score()     │    │ - _divergence_flag(df) -> Series  │
+  │ - _merge_prices(agg_df)          │    ├──────────────────────────────────┤
+  ├──────────────────────────────────┤    │ Thresholds:                      │
+  │ sentiment_score =                │    │  drift_flag:    class shift > 15pp│
+  │   (buy - sell) / classified      │    │  volume_spike:  vol > mean + 3σ  │
+  │ Range: [-1.0, +1.0]              │    │  weak_signal:   no_opinion > 35% │
+  +──────────────────────────────────+    │  divergence:    5+ consec. days  │
+                                          +──────────────────────────────────+
+
+  +──────────────────────────────────────────────────────────────────────────+
+  │                          EvaluationEngine                                │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ + evaluate_on_human_labels(results_df, labels_csv, model_name) -> dict   │
+  │     metrics: accuracy, f1_weighted, f1_macro, precision, recall, kappa   │
+  │                                                                          │
+  │ + evaluate_sentiment_price_correlation(agg_df, model_name,               │
+  │                                        n_bootstrap=1000) -> dict         │
+  │     metrics: pearson_r, p_value, ci_lower, ci_upper  @ lags 0-3         │
+  │                                                                          │
+  │ + compare_models(metrics: dict) -> str   (best model name)               │
+  │     Priority:                                                            │
+  │       1. Weighted F1 > 0.50            (gate — eliminates weak models)   │
+  │       2. Highest |Pearson r|           (sentiment-price alignment)       │
+  │       3. Lowest no_opinion_rate        (more actionable signal)          │
+  │       4. Highest inter-model agreement (reliability across models)       │
+  │       5. Lowest cost                   (VADER < FinBERT < GPT)          │
+  │                                                                          │
+  │ + inter_model_agreement(*result_dfs, model_names) -> DataFrame           │
+  │     computes pairwise agreement rate for all model pairs                 │
+  │ - _bootstrap_pearson(x, y, n) -> (ci_lower, ci_upper)                   │
+  +──────────────────────────────────────────────────────────────────────────+
+
+  +──────────────────────────────────────────────────────────────────────────+
+  │                          Airflow DAG                                     │
+  │              dag_id: sentiment_retrain_pipeline                          │
+  │              schedule: "0 2 * * *"  (daily 02:00 UTC)                   │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │                                                                          │
+  │  [check_drift]          ShortCircuitOperator                             │
+  │       reads drift_flags CSV for last 7 days                             │
+  │       returns True if >= 30% days have any drift flag                   │
+  │       |                                                                  │
+  │       | True (drift detected)          False → SKIP ALL DOWNSTREAM      │
+  │       v                                                                  │
+  │  [retrain_finbert]      PythonOperator                                   │
+  │       calls FinBERTFineTuner.run(epochs=3, batch_size=16)               │
+  │       XCom push: retrain_result (model path)                            │
+  │       |                                                                  │
+  │       v                                                                  │
+  │  [evaluate_challenger]  PythonOperator                                   │
+  │       loads fine-tuned model path from XCom                             │
+  │       runs FinBERTModel inference on val split                           │
+  │       calls EvaluationEngine.evaluate_on_human_labels()                 │
+  │       XCom push: challenger_f1, challenger_metrics                      │
+  │       |                                                                  │
+  │       v                                                                  │
+  │  [compare_champion]     PythonOperator                                   │
+  │       loads champion F1 from MLflow Production stage                    │
+  │       pulls challenger_f1 from XCom                                     │
+  │       XCom push: challenger_wins (bool)                                 │
+  │       |                                                                  │
+  │       v                                                                  │
+  │  [promote_if_better]    PythonOperator                                   │
+  │       if challenger_wins:                                                │
+  │           register fine-tuned model → MLflow registry                   │
+  │           archive current Production version                             │
+  │           promote challenger → Production                                │
+  │       else:                                                              │
+  │           log "champion retained"                                        │
+  +──────────────────────────────────────────────────────────────────────────+
+
+  KEY DATA SCHEMAS
+  ────────────────
+
+  tweets_{train|val|test}.parquet
+  ┌────────────────┬──────────────────────────────────────────┐
+  │ index          │ int                                      │
+  │ Date           │ datetime                                 │
+  │ Tweet          │ str   (cleaned text)                     │
+  │ Stock Name     │ str   (AAPL | TSLA | TSM)               │
+  │ Trading Date   │ datetime                                 │
+  │ split          │ str   (train | val | test)               │
+  └────────────────┴──────────────────────────────────────────┘
+
+  {model}_results.csv
+  ┌────────────────┬──────────────────────────────────────────┐
+  │ tweet_id       │ int                                      │
+  │ trading_date   │ datetime                                 │
+  │ ticker         │ str                                      │
+  │ label          │ str   (Buy | Hold | Sell | No Opinion)   │
+  │ confidence     │ float                                    │
+  │ compound_score │ float  (VADER only)                      │
+  │ positive_score │ float  (FinBERT only)                    │
+  │ negative_score │ float  (FinBERT only)                    │
+  │ neutral_score  │ float  (FinBERT only)                    │
+  │ raw_response   │ str    (GPT only)                        │
+  └────────────────┴──────────────────────────────────────────┘
+
+  aggregated_{model}.csv
+  ┌──────────────────────────┬────────────────────────────────┐
+  │ ticker                   │ str                            │
+  │ trading_date             │ datetime                       │
+  │ tweet_volume             │ int                            │
+  │ buy_pct / sell_pct       │ float  (0.0 – 1.0)            │
+  │ hold_pct / no_opinion_pct│ float  (0.0 – 1.0)            │
+  │ sentiment_score          │ float  (-1.0 – +1.0)          │
+  │ rolling_3day_sentiment   │ float                          │
+  │ rolling_7day_sentiment   │ float                          │
+  │ Close                    │ float  (stock price)           │
+  │ Daily_Return_%           │ float                          │
+  │ Intraday_Trend           │ int    (1=bullish, 0=bearish)  │
+  └──────────────────────────┴────────────────────────────────┘
+
+  drift_flags_{model}.csv
+  ┌─────────────────────┬─────────────────────────────────────┐
+  │ ticker              │ str                                 │
+  │ trading_date        │ datetime                            │
+  │ drift_flag          │ bool  (class shift > 15pp)          │
+  │ volume_spike_flag   │ bool  (volume > mean + 3σ)          │
+  │ weak_signal_flag    │ bool  (no_opinion > 35%)            │
+  │ divergence_flag     │ bool  (sentiment↔price 5+ days)     │
+  └─────────────────────┴─────────────────────────────────────┘
+
+================================================================================
+  END OF C4 ARCHITECTURE DOCUMENT
+================================================================================

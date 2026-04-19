@@ -1,0 +1,69 @@
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#2D6A4F"
+    primaryTextColor: "#ffffff"
+    primaryBorderColor: "#1a4a32"
+    lineColor: "#444444"
+    secondaryColor: "#438DD5"
+---
+C4Component
+    title C4 Level 3 — Component: ML Pipeline Container
+
+    Person(mlEngineer, "ML Engineer", "Runs pipeline CLI")
+    ContainerDb(localFs, "Local File Store", "Parquet, CSV, mlruns/")
+    Container_Ext(mlflowServer, "MLflow Tracking Server", "MLflow 2.13+")
+    System_Ext(huggingface, "Hugging Face Hub")
+    System_Ext(ollama, "Ollama")
+
+    Container_Boundary(mlPipeline, "ML Pipeline Container") {
+        Component(orchestrator, "Pipeline Orchestrator", "run_pipeline.py, argparse, MLflow SDK", "CLI entry point. Coordinates all pipeline phases sequentially. Manages MLflow parent run with nested child runs per model. Flags: --models, --finetune, --finetune_epochs, --finetune_batch_size")
+
+        Component(preproc, "PreprocessingPipeline", "Python, pandas, langdetect", "Loads raw CSVs. Cleans tweets: HTML entities, URLs, non-English, dedup. Time-based 60/20/20 split per ticker (no shuffle — prevents temporal leakage). Saves parquet files.")
+
+        Component(vaderModel, "VADERModel", "Python, vaderSentiment, NumPy", "Rule-based lexicon. Compound score [-1,+1] → Buy/Hold/Sell/No Opinion. No GPU. batch=1000. ~5s for 2k tweets. $0 cost.")
+
+        Component(finbertModel, "FinBERTModel", "Python, Transformers, PyTorch", "ProsusAI/finbert transformer. Softmax argmax: positive→Buy, negative→Sell, neutral→Hold. Confidence threshold 0.6 → No Opinion. batch=32, max_len=512. CUDA/MPS/CPU.")
+
+        Component(finbertFT, "FinBERTFineTuner", "Python, Transformers Trainer, PyTorch", "Fine-tunes on silver labels (VADER on ~28k train tweets) + gold labels (200 human annotations ×5 oversample). Early stopping patience=2 on eval F1. Saves best checkpoint.")
+
+        Component(gptModel, "GPTModel", "Python, OpenAI SDK, Ollama", "Sends batches of 5 tweets with 8-shot prompt to Ollama (default) or OpenAI. Retries ×3 with exponential backoff. Checkpoint-resumes on failure. 5–18 min for 2k tweets.")
+
+        Component(aggregationEngine, "AggregationEngine", "Python, pandas", "Groups by (ticker, trading_date). Computes label distributions, sentiment_score=(buy−sell)/classified, 3-day and 7-day rolling averages. Merges OHLCV price data.")
+
+        Component(driftDetector, "DriftDetector", "Python, pandas, NumPy", "4 drift signals: label class shift >15pp, volume spike (3σ rule), weak signal (no_opinion>35%), sentiment–price divergence (5+ consecutive days).")
+
+        Component(evaluationEngine, "EvaluationEngine", "Python, scikit-learn, SciPy", "Evaluates on 200 gold-labeled tweets: F1 macro/weighted, accuracy, Kappa. Pearson r vs price at lags 0–3, bootstrap CI n=1000. Selects best model by priority rules.")
+
+        Component(mlflowClient, "MLflow Integration", "Python, MLflow SDK", "Logs params, metrics, artifacts in nested child runs. Registers best model in stock_sentiment_classifier registry. Promotes champion to Production stage.")
+    }
+
+    Rel(mlEngineer, orchestrator, "python run_pipeline.py --models vader finbert gpt --finetune", "Terminal")
+
+    Rel(orchestrator, preproc, "Phase 1: preprocess")
+    Rel(orchestrator, vaderModel, "Phase 2: VADER inference")
+    Rel(orchestrator, finbertModel, "Phase 2: FinBERT inference")
+    Rel(orchestrator, finbertFT, "Phase 2 optional: fine-tune")
+    Rel(orchestrator, gptModel, "Phase 2: GPT/Ollama inference")
+    Rel(orchestrator, aggregationEngine, "Phase 3: aggregate per model")
+    Rel(orchestrator, driftDetector, "Phase 4: drift detection")
+    Rel(orchestrator, evaluationEngine, "Phase 5: evaluate + compare")
+    Rel(orchestrator, mlflowClient, "Wraps all phases in parent MLflow run")
+    Rel(finbertFT, finbertModel, "Instantiates for inference after fine-tuning")
+
+    Rel(preproc, localFs, "Reads tweets.csv, stock_prices.csv → writes parquets")
+    Rel(vaderModel, localFs, "Reads tweets_test.parquet → writes vader_results.csv")
+    Rel(finbertModel, localFs, "Reads tweets_test.parquet → writes finbert_results.csv")
+    Rel(finbertFT, localFs, "Reads train/val parquets → writes models/finbert_finetuned/best/")
+    Rel(gptModel, localFs, "Reads tweets_test.parquet → writes gpt_results.csv + checkpoint")
+    Rel(aggregationEngine, localFs, "Reads result CSVs + prices_clean.parquet → writes aggregated_{model}.csv")
+    Rel(driftDetector, localFs, "Reads aggregated CSVs → writes drift_flags_{model}.csv")
+    Rel(evaluationEngine, localFs, "Reads result CSVs + human_labels → writes classification reports")
+    Rel(mlflowClient, mlflowServer, "Logs runs, metrics, artifacts; registers models", "MLflow SDK")
+
+    Rel(finbertModel, huggingface, "Downloads ProsusAI/finbert weights", "HTTPS")
+    Rel(finbertFT, huggingface, "Downloads FinBERT base weights", "HTTPS")
+    Rel(gptModel, ollama, "HTTP: sends batch of 5 tweets, receives labels", "HTTP")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

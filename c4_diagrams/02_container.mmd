@@ -1,0 +1,54 @@
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#1168BD"
+    primaryTextColor: "#ffffff"
+    primaryBorderColor: "#0a4a8a"
+    lineColor: "#444444"
+    secondaryColor: "#999999"
+---
+C4Container
+    title C4 Level 2 — Container: Stock Sentiment Analysis System
+
+    Person(investor, "Retail Investor")
+    Person(mlEngineer, "ML Engineer")
+    Person(sysAdmin, "System Admin")
+
+    System_Ext(supabase, "Supabase", "Cloud PostgreSQL + Auth")
+    System_Ext(huggingface, "Hugging Face Hub", "Pre-trained FinBERT weights")
+    System_Ext(ollama, "Ollama", "Local LLM inference server")
+    System_Ext(openaiApi, "OpenAI API", "Optional cloud LLM")
+
+    System_Boundary(sys, "Stock Sentiment Analysis System") {
+        Container(dashboard, "Flask Dashboard", "Python 3.11, Flask 3.0, Gunicorn, Chart.js, Bootstrap 5", "Web UI: sentiment charts, drift alerts, model comparison, live simulation, user auth. Port 8080")
+        Container(mlflowServer, "MLflow Tracking Server", "Python 3.11, MLflow 2.13+", "Experiment tracking, model registry, champion/challenger promotion. Port 5000")
+        Container(airflowWeb, "Airflow Webserver", "Apache Airflow 2.9.3, Python 3.11", "DAG monitoring UI, task logs, manual triggers. Port 8082")
+        Container(airflowSched, "Airflow Scheduler", "Apache Airflow 2.9.3, Python 3.11", "Executes daily retraining DAG at 02:00 UTC: drift check → retrain → evaluate → promote")
+        ContainerDb(airflowDb, "Airflow Metadata DB", "PostgreSQL 15-alpine", "DAG state, task instances, XCom values, scheduler heartbeats")
+        Container(mlPipeline, "ML Pipeline (CLI)", "Python 3.11, PyTorch 2.3, Transformers 4.41, scikit-learn, pandas", "Orchestrates preprocessing → VADER/FinBERT/GPT inference → aggregation → drift detection → evaluation → MLflow logging")
+        ContainerDb(localFs, "Local File Store", "Parquet, CSV, mlruns/", "Processed parquets (train/val/test), inference CSVs, aggregated CSVs, drift flag CSVs, MLflow artifacts")
+    }
+
+    Rel(investor, dashboard, "Views dashboard, runs simulation", "HTTPS :8080")
+    Rel(mlEngineer, mlPipeline, "Runs pipeline CLI with flags", "Terminal")
+    Rel(mlEngineer, mlflowServer, "Views experiments and model registry", "Browser :5000")
+    Rel(sysAdmin, airflowWeb, "Monitors and triggers DAGs", "Browser :8082")
+
+    Rel(dashboard, supabase, "Auth, reads results/drift flags, reads/writes simulation state", "Supabase SDK")
+    Rel(dashboard, localFs, "Reads aggregated CSVs as fallback", "File I/O")
+    Rel(dashboard, mlflowServer, "Reads model metadata", "HTTP :5000")
+
+    Rel(mlPipeline, localFs, "Reads raw CSVs/parquets; writes results, aggregates, drift flags", "File I/O")
+    Rel(mlPipeline, mlflowServer, "Logs runs, metrics, artifacts; registers models", "MLflow SDK :5000")
+    Rel(mlPipeline, huggingface, "Downloads FinBERT weights", "HTTPS")
+    Rel(mlPipeline, ollama, "Sends tweet batches (batch=5)", "HTTP")
+    Rel(mlPipeline, openaiApi, "Optional GPT-4o-mini classification", "HTTPS")
+
+    Rel(airflowSched, localFs, "Reads drift flags; writes retrained model", "File I/O")
+    Rel(airflowSched, mlflowServer, "Reads champion F1; registers/promotes challenger", "MLflow SDK")
+    Rel(airflowSched, huggingface, "Downloads FinBERT base weights", "HTTPS")
+    Rel(airflowSched, airflowDb, "Reads/writes DAG state, XCom", "PostgreSQL")
+    Rel(airflowWeb, airflowDb, "Reads DAG/task run state", "PostgreSQL")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")

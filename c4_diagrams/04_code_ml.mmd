@@ -1,0 +1,125 @@
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#1168BD"
+    primaryTextColor: "#ffffff"
+    primaryBorderColor: "#0a4a8a"
+    lineColor: "#555555"
+    classText: "#000000"
+---
+classDiagram
+    direction TB
+
+    class PreprocessingPipeline {
+        +str data_dir
+        +str processed_dir
+        +run() dict
+        -_load_prices() DataFrame
+        -_load_tweets() DataFrame
+        -_clean_tweet(text) str
+        -_is_english(text) bool
+        -_split(df) tuple
+    }
+
+    class VADERModel {
+        +str processed_dir
+        +int batch_size
+        +run(mlflow_parent_run_id) DataFrame
+        -_classify_batch(texts) list
+        -_map_label(compound, token_count) tuple
+    }
+
+    class FinBERTModel {
+        +str model_name_or_path
+        +int batch_size
+        +float confidence_threshold
+        +str model_key
+        +str device
+        +run(mlflow_parent_run_id) DataFrame
+        -_classify_batch(texts) list
+        -_load_model() void
+    }
+
+    class FinBERTFineTuner {
+        +str processed_dir
+        +str output_dir
+        +run(epochs, batch_size) dict
+        -_build_training_df() DataFrame
+        -_compute_metrics(eval_pred) dict
+    }
+
+    class _TweetDataset {
+        +dict encodings
+        +list labels
+        +__len__() int
+        +__getitem__(idx) dict
+    }
+
+    class GPTModel {
+        +int batch_size
+        +float temperature
+        +int max_retries
+        +str ollama_model
+        +str ollama_base_url
+        +run(mlflow_parent_run_id) DataFrame
+        -_call_api(tweets) tuple
+        -_parse_response(text, n) list
+        -_build_user_message(tweets) str
+    }
+
+    class AggregationEngine {
+        +str processed_dir
+        +run(results_df, model_name) DataFrame
+        -_compute_label_distribution(group) Series
+        -_compute_sentiment_score(group) float
+        -_merge_prices(agg_df) DataFrame
+    }
+
+    class DriftDetector {
+        +run(aggregated_df, model_name) DataFrame
+        -_drift_flag(df) Series
+        -_volume_spike_flag(df) Series
+        -_weak_signal_flag(df) Series
+        -_divergence_flag(df) Series
+    }
+
+    class EvaluationEngine {
+        +evaluate_on_human_labels(results_df, labels_csv, model_name) dict
+        +evaluate_sentiment_price_correlation(aggregated_df, model_name, n_bootstrap) dict
+        +compare_models(metrics) str
+        +inter_model_agreement(result_dfs, model_names) DataFrame
+        -_bootstrap_pearson(x, y, n) tuple
+    }
+
+    class MLflowIntegration {
+        +str experiment_name
+        +log_run(model_name, params, metrics, artifacts) void
+        +register_model(model_name, run_id) ModelVersion
+        +promote_to_production(model_name, version) void
+        +get_production_metrics(model_name) dict
+    }
+
+    class AirflowDAG {
+        +str dag_id
+        +str schedule
+        +check_drift() bool
+        +retrain_finbert() dict
+        +evaluate_challenger() dict
+        +compare_champion() bool
+        +promote_if_better() void
+    }
+
+    FinBERTFineTuner ..> _TweetDataset : creates PyTorch Dataset
+    FinBERTFineTuner ..> FinBERTModel : instantiates after training
+    AirflowDAG ..> FinBERTFineTuner : calls retrain
+    AirflowDAG ..> FinBERTModel : calls inference
+    AirflowDAG ..> EvaluationEngine : calls evaluate
+    AirflowDAG ..> MLflowIntegration : promotes model
+
+    note for VADERModel "compound ≥ 0.05 → Buy\ncompound ≤ -0.05 → Sell\n|compound| < 0.05 → Hold\ntoken_count < 3 → No Opinion"
+    note for FinBERTModel "confidence_threshold = 0.6\nmax_confidence < threshold → No Opinion\nDevice: CUDA > MPS > CPU"
+    note for FinBERTFineTuner "Silver labels: VADER on train split\nGold labels: human_labels × 5 oversample\nEarly stopping patience=2 on eval F1"
+    note for DriftDetector "drift_flag: class shift > 15pp\nvolume_spike: volume > mean + 3σ\nweak_signal: no_opinion > 35%\ndivergence: sentiment ↔ price 5+ days"
+    note for EvaluationEngine "Priority: F1>0.5 → Pearson r → no_opinion rate → agreement → cost\nPearson r at lags 0-3, bootstrap CI n=1000"
+    note for AirflowDAG "Schedule: 0 2 * * * (daily 02:00 UTC)\nShort-circuit if < 30% days flagged\nXCom for task-to-task data passing"

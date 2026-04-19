@@ -1,0 +1,41 @@
+---
+config:
+  theme: base
+  themeVariables:
+    primaryColor: "#1168BD"
+    primaryTextColor: "#ffffff"
+    primaryBorderColor: "#0a4a8a"
+    lineColor: "#444444"
+    secondaryColor: "#999999"
+    tertiaryColor: "#2D6A4F"
+  c4:
+    diagramMarginY: 20
+---
+C4Context
+    title C4 Level 1 — System Context: Stock Sentiment Analysis System
+
+    Person(investor, "Retail Investor", "Views sentiment insights and live portfolio simulation via the web dashboard")
+    Person(mlEngineer, "ML Engineer", "Runs pipeline CLI, tunes hyperparameters, monitors MLflow experiments")
+    Person(dataEngineer, "Data Engineer", "Seeds processed data into Supabase, manages preprocessing quality")
+    Person(sysAdmin, "System Admin", "Deploys Docker containers, configures env vars, monitors Airflow DAGs")
+
+    System(system, "Stock Sentiment Analysis System", "Classifies tweet sentiment per ticker (AAPL/TSLA/TSM), aggregates signals, detects drift, serves insights on a Bloomberg-style dashboard, and auto-retrains models on drift")
+
+    System_Ext(supabase, "Supabase", "Managed cloud PostgreSQL + Auth. Stores users, aggregated results, drift flags, simulation state")
+    System_Ext(huggingface, "Hugging Face Hub", "Hosts pre-trained FinBERT weights (ProsusAI/finbert) downloaded at runtime")
+    System_Ext(ollama, "Ollama (Local LLM)", "OpenAI-compatible local inference server running gemma3:4b — default free backend")
+    System_Ext(openaiApi, "OpenAI API", "Optional cloud LLM (GPT-4o-mini). Higher quality, ~$5–15 cost per pipeline run")
+    System_Ext(csvData, "Static Data Files", "tweets.csv (~53k tweets), stock_prices.csv (OHLCV), human_labels/lebeled.csv (200 gold-labeled tweets)")
+
+    Rel(investor, system, "Views dashboard, runs live simulation", "HTTPS")
+    Rel(mlEngineer, system, "Runs pipeline CLI, monitors MLflow", "CLI / Browser")
+    Rel(dataEngineer, system, "Seeds data, monitors preprocessing", "CLI / Browser")
+    Rel(sysAdmin, system, "Deploys via Docker Compose, manages Airflow", "Terminal")
+
+    Rel(system, supabase, "Reads/writes users, results, drift flags, simulation state", "Supabase SDK / REST")
+    Rel(system, huggingface, "Downloads ProsusAI/finbert weights on first run", "HTTPS")
+    Rel(system, ollama, "Sends tweet batches for LLM classification", "HTTP / OpenAI-compatible API")
+    Rel(system, openaiApi, "Optional: GPT-4o-mini classification", "HTTPS / OpenAI SDK")
+    Rel(system, csvData, "Reads raw tweets, prices, gold labels as pipeline input", "File I/O")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
