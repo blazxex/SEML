@@ -44,10 +44,11 @@ services:
       dockerfile: Dockerfile.mlflow
     ports:
       - "5000:5000"
-    env_file: .env
+    environment:
+      MLFLOW_ALLOW_ORIGINS: "*"
+      MLFLOW_ALLOWED_HOSTS: "*"
     volumes:
       - ./mlruns:/mlflow/mlruns
-      - ./mlflow.db:/mlflow/mlflow.db
       - mlflow-data:/mlflow
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
