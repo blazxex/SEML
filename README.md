@@ -57,12 +57,17 @@ PreprocessingPipeline   (60/20/20 time-based split)
 
 ## Models
 
-| Model | Type | Val F1 | Buy% | Hold% | Sell% | Confidence |
-|---|---|---|---|---|---|---|
-| VADER | Rule-based lexicon | — | 50.9% | 26.2% | 22.8% | — |
-| FinBERT (base) | `ProsusAI/finbert` | — | 9.1% | 71.8% | 9.3% | 81.9% |
-| **FinBERT (fine-tuned)** | Fine-tuned on project data | **0.893** | **51.6%** | 24.6% | 21.5% | **96.9%** |
-| GPT-4o-mini | Few-shot LLM | — | 43.2% | 8.3% | 21.7% | — |
+Evaluated on 200 human-labeled tweets (test split). Fine-tuned FinBERT val metrics are from training validation set.
+
+| Model | Macro F1¹ | Weighted F1¹ | Accuracy¹ | Buy% | Hold% | Sell% | Confidence |
+|---|---|---|---|---|---|---|---|
+| VADER | 0.28 | 0.30 | 34% | 50.9% | 26.2% | 22.8% | — |
+| FinBERT (base) | 0.27 | 0.26 | 27% | 9.1% | 71.8% | 9.3% | 81.9% |
+| Gemma3:4b (Ollama) | **0.59** | **0.63** | **65%** | 43.2% | 8.3% | 21.7% | — |
+| FinBERT (fine-tuned) | 0.893² | —² | 90.6%² | **51.6%** | 24.6% | 21.5% | **96.9%** |
+
+¹ Evaluated on 200 human-labeled tweets.  
+² Evaluated on training validation set (VADER silver + gold labels) — not directly comparable.
 
 Fine-tuning training data: ~35k VADER silver labels + 145 human gold labels (×5 oversampled).
 
@@ -105,7 +110,7 @@ python seed_data.py --models finbert_finetuned --clear   # re-upload one model
   - Drift flag status
   - Side-by-side model comparison
 - **Live simulation** — replays test-split tweets in real time using VADER, writes to Supabase
-- **Model selector** — VADER / FinBERT (Base) / FinBERT (Fine-tuned) / GPT-4o-mini
+- **Model selector** — VADER / FinBERT (Base) / FinBERT (Fine-tuned) / Gemma3:4b (Ollama)
 - **Drift alerts** — banner appears when any drift flag is active
 
 ---
@@ -206,7 +211,7 @@ python -m dashboard.app
 - **Dataset**: ~53,000 tweets + OHLCV prices for AAPL, TSLA, TSM (Sept 2021 – Sept 2022)
 - **Split**: 60% train / 20% val / 20% test — time-based only (no random split)
 - **Human labels**: 200 tweets manually annotated for F1 evaluation
-- **Known limitations**: static historical dataset; no ground-truth trading labels; GPT-4o-mini behavior may change; correlation ≠ causation
+- **Known limitations**: static historical dataset; no ground-truth trading labels; LLM output quality depends on Ollama model version; correlation ≠ causation
 
 ---
 

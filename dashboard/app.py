@@ -25,7 +25,7 @@ MODEL_DISPLAY    = {
     "vader":             "VADER (Rule-based)",
     "finbert":           "FinBERT (Base)",
     "finbert_finetuned": "FinBERT (Fine-tuned)",
-    "gpt":               "GPT-4o-mini",
+    "gpt":               f"Gemma3:4b (Ollama)",
 }
 
 
