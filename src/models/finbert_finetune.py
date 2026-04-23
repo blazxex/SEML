@@ -106,13 +106,24 @@ class FinBERTFineTuner:
         log.info("Combined training rows: %d", len(combined))
         return combined
 
-    def run(self, epochs: int = 3, batch_size: int = 16) -> dict:
+    def run(self, epochs: int = 3, batch_size: int = 16, max_samples: int | None = None) -> dict:
         """
         Fine-tune and save model.  Returns {f1, accuracy, model_path}.
+
+        max_samples: if set, stratified-subsample the combined dataset to at most
+        this many rows before train/val split. Useful for demo / CPU runs.
         """
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
         df = self._build_training_df()
+        if max_samples is not None and len(df) > max_samples:
+            df = df.groupby("label", group_keys=False).apply(
+                lambda g: g.sample(
+                    n=max(1, int(round(max_samples * len(g) / len(df)))),
+                    random_state=42,
+                )
+            ).reset_index(drop=True)
+            log.info("Subsampled training rows to %d (max_samples=%d)", len(df), max_samples)
         texts  = df["Tweet"].astype(str).tolist()
         labels = df["label"].map(LABEL2ID).tolist()
 
@@ -195,7 +206,10 @@ class FinBERTFineTuner:
             model_path = str(OUTPUT_DIR / "best")
             trainer.save_model(model_path)
             tokenizer.save_pretrained(model_path)
-            mlflow.log_artifact(model_path, artifact_path="finbert_finetuned")
+            try:
+                mlflow.log_artifact(model_path, artifact_path="finbert_finetuned")
+            except Exception as e:
+                log.warning("Skipped MLflow artifact upload (non-fatal): %s", e)
 
             log.info("Fine-tune done. val_f1=%.4f  saved → %s", val_f1, model_path)
 

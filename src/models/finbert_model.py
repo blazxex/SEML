@@ -123,7 +123,10 @@ class FinBERTModel:
 
             out_path = RESULTS_DIR / f"{self.model_key}_results.csv"
             result_df.to_csv(out_path, index=False)
-            mlflow.log_artifact(str(out_path))
+            try:
+                mlflow.log_artifact(str(out_path))
+            except Exception as e:
+                print(f"[warn] Skipped MLflow artifact upload: {e}")
 
             total = len(result_df)
             vc = result_df["label"].value_counts(normalize=True)

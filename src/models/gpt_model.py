@@ -213,7 +213,10 @@ class GPTModel:
             result_df = pd.read_csv(checkpoint_path)
             result_df.to_csv(out_path, index=False)
             checkpoint_path.unlink()  # remove checkpoint once complete
-            mlflow.log_artifact(str(out_path))
+            try:
+                mlflow.log_artifact(str(out_path))
+            except Exception as e:
+                print(f"[warn] Skipped MLflow artifact upload: {e}")
 
             vc = result_df["label"].value_counts(normalize=True)
             mlflow.log_metrics({

@@ -5,7 +5,7 @@
 #
 # Service URLs:
 #   Dashboard  → http://localhost:8080
-#   MLflow UI  → http://localhost:5000
+#   MLflow UI  → http://localhost:5001
 #   Airflow UI → http://localhost:8082  (admin / admin)
 
 x-airflow-common: &airflow-common
@@ -29,7 +29,6 @@ x-airflow-common: &airflow-common
     - ./dags:/opt/airflow/dags
     - ./logs/airflow:/opt/airflow/logs
     - .:/opt/airflow/project
-    - mlflow-artifacts:/mlflow/artifacts
   depends_on:
     airflow-postgres:
       condition: service_healthy
@@ -43,13 +42,13 @@ services:
       context: .
       dockerfile: Dockerfile.mlflow
     ports:
-      - "5000:5000"
+      - "5001:5000"
     environment:
-      MLFLOW_ALLOW_ORIGINS: "*"
-      MLFLOW_ALLOWED_HOSTS: "*"
+      MLFLOW_SERVER_ALLOWED_HOSTS: "*"
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: "*"
     volumes:
       - ./mlruns:/mlflow/mlruns
-      - mlflow-data:/mlflow
+      - mlflow-artifacts:/mlflow/artifacts
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
       interval: 15s
@@ -126,5 +125,4 @@ services:
 
 volumes:
   airflow-db:
-  mlflow-data:
   mlflow-artifacts:

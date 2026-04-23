@@ -87,7 +87,10 @@ class VADERModel:
 
             out_path = RESULTS_DIR / "vader_results.csv"
             results.to_csv(out_path, index=False)
-            mlflow.log_artifact(str(out_path))
+            try:
+                mlflow.log_artifact(str(out_path))
+            except Exception as e:
+                print(f"[warn] Skipped MLflow artifact upload: {e}")
 
             total = len(results)
             vc = results["label"].value_counts(normalize=True)

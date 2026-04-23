@@ -85,7 +85,11 @@ def _retrain_finbert(**context):
 
     mlflow.set_experiment("stock_sentiment_prediction")
     with mlflow.start_run(run_name=f"retrain_{datetime.utcnow().strftime('%Y%m%d_%H%M')}"):
-        result = FinBERTFineTuner().run(epochs=3, batch_size=16)
+        result = FinBERTFineTuner().run(epochs=1, batch_size=8, max_samples=2000)
+        mlflow.log_metrics({
+            "val_f1":       float(result.get("f1", 0.0)),
+            "val_accuracy": float(result.get("accuracy", 0.0)),
+        })
 
     context["ti"].xcom_push(key="retrain_result", value=result)
     log.info("Retrain complete: %s", result)
@@ -100,18 +104,24 @@ def _evaluate_challenger(**context):
     from src.models.finbert_model import FinBERTModel
     from src.evaluation import EvaluationEngine
 
+    mlflow.set_experiment("stock_sentiment_prediction")
+
     retrain_result = context["ti"].xcom_pull(key="retrain_result", task_ids="retrain_finbert")
     model_path = retrain_result.get("model_path") if retrain_result else None
 
-    # Run inference on test split using fine-tuned weights
-    finbert = FinBERTModel(model_name_or_path=model_path)
-    results_df = finbert.run()
+    run_name = f"evaluate_{datetime.utcnow().strftime('%Y%m%d_%H%M')}"
+    with mlflow.start_run(run_name=run_name) as parent:
+        finbert = FinBERTModel(model_name_or_path=model_path)
+        results_df = finbert.run(mlflow_parent_run_id=parent.info.run_id)
 
-    # Evaluate against human labels
-    engine  = EvaluationEngine()
-    metrics = engine.evaluate_on_human_labels(results_df, HUMAN_LABELS, "finbert_finetuned")
+        engine  = EvaluationEngine()
+        metrics = engine.evaluate_on_human_labels(results_df, HUMAN_LABELS, "finbert_finetuned")
 
-    challenger_f1 = metrics.get("macro_f1", metrics.get("f1", 0.0))
+        challenger_f1 = float(metrics.get("f1_macro", metrics.get("macro_f1", metrics.get("f1", 0.0))))
+        to_log = {f"challenger_{k}": float(v) for k, v in metrics.items()}
+        to_log["challenger_f1"] = challenger_f1
+        mlflow.log_metrics(to_log)
+
     context["ti"].xcom_push(key="challenger_f1", value=challenger_f1)
     context["ti"].xcom_push(key="challenger_metrics", value=metrics)
     log.info("Challenger F1: %.4f", challenger_f1)
@@ -125,7 +135,6 @@ def _compare_champion(**context):
     import mlflow
     from mlflow.tracking import MlflowClient
     os.chdir(PROJECT_ROOT)
-    mlflow.set_tracking_uri(str(PROJECT_ROOT / "mlruns"))
 
     challenger_f1 = context["ti"].xcom_pull(key="challenger_f1", task_ids="evaluate_challenger") or 0.0
 
@@ -137,7 +146,7 @@ def _compare_champion(**context):
             run_id = versions[0].run_id
             run    = client.get_run(run_id)
             # Try common metric key names
-            for key in ("macro_f1", "f1", "val_f1", "test_f1"):
+            for key in ("f1_macro", "macro_f1", "f1", "val_f1", "test_f1", "challenger_f1"):
                 val = run.data.metrics.get(key)
                 if val is not None:
                     champion_f1 = val
@@ -164,7 +173,6 @@ def _promote_if_better(**context):
     import mlflow
     from mlflow.tracking import MlflowClient
     os.chdir(PROJECT_ROOT)
-    mlflow.set_tracking_uri(str(PROJECT_ROOT / "mlruns"))
 
     challenger_wins = context["ti"].xcom_pull(key="challenger_wins", task_ids="compare_champion")
     champion_f1     = context["ti"].xcom_pull(key="champion_f1",     task_ids="compare_champion") or 0.0
