@@ -15,8 +15,9 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
-RESULTS_DIR  = Path(__file__).parent.parent / "results"
-DATA_DIR     = Path(__file__).parent.parent / "cleaned_data"
+RESULTS_DIR   = Path(__file__).parent.parent / "results"
+DATA_DIR      = Path(__file__).parent.parent / "cleaned_data"
+PROCESSED_DIR = Path(__file__).parent.parent / "data" / "processed"
 # Discover available models dynamically from results files
 MODELS       = ["vader", "finbert", "finbert_finetuned", "gpt"]
 
@@ -288,6 +289,132 @@ def sim_state():
     model = request.args.get("model", "vader")
     state = simulator.get_state(model)
     return jsonify(state)
+
+
+# ------------------------------------------------------------------
+# Raw tweets for a date — powers the left tweet panel
+# ------------------------------------------------------------------
+
+_tweets_cache: pd.DataFrame | None = None
+_predictions_cache: dict[str, dict[int, str]] = {}
+
+
+def _load_tweets() -> pd.DataFrame | None:
+    global _tweets_cache
+    if _tweets_cache is None:
+        path = PROCESSED_DIR / "tweets_test.parquet"
+        if not path.exists():
+            return None
+        df = pd.read_parquet(path)
+        df.index.name = "tweet_id"
+        df = df.reset_index()
+        df["Trading Date"] = pd.to_datetime(df["Trading Date"])
+        _tweets_cache = df
+    return _tweets_cache
+
+
+def _load_predictions(model: str) -> dict[int, str]:
+    if model not in _predictions_cache:
+        path = RESULTS_DIR / f"{model}_results.csv"
+        if path.exists():
+            df = pd.read_csv(path, usecols=["tweet_id", "label"])
+            _predictions_cache[model] = df.set_index("tweet_id")["label"].to_dict()
+        else:
+            _predictions_cache[model] = {}
+    return _predictions_cache[model]
+
+
+@app.route("/api/tweets")
+@login_required
+def api_tweets():
+    ticker = request.args.get("ticker", "AAPL").upper()
+    date   = request.args.get("date", "")
+    limit  = int(request.args.get("limit", 50))
+
+    df = _load_tweets()
+    if df is None:
+        return jsonify({"error": "tweets_test.parquet not found"}), 404
+    if not date:
+        return jsonify({"error": "date required"}), 400
+
+    target = pd.to_datetime(date)
+    sub = df[(df["Stock Name"] == ticker) & (df["Trading Date"] == target)].head(limit)
+    if sub.empty:
+        return jsonify({"ticker": ticker, "date": date, "tweets": [], "count": 0})
+
+    preds = {m: _load_predictions(m) for m in MODELS}
+
+    tweets = []
+    for _, r in sub.iterrows():
+        tid = int(r["tweet_id"])
+        tweets.append({
+            "tweet_id":     tid,
+            "tweet":        str(r["Tweet"]),
+            "ticker":       str(r.get("Stock Name", "")),
+            "trading_date": r["Trading Date"].strftime("%Y-%m-%d"),
+            "predictions":  {m: preds[m].get(tid, "—") for m in MODELS},
+        })
+
+    return jsonify({
+        "ticker": ticker,
+        "date":   date,
+        "count":  len(tweets),
+        "total_for_day": int(((df["Stock Name"] == ticker) & (df["Trading Date"] == target)).sum()),
+        "tweets": tweets,
+    })
+
+
+# ------------------------------------------------------------------
+# Manual labeling API (human-in-the-loop for retraining)
+# ------------------------------------------------------------------
+
+@app.route("/api/labels/queue")
+@login_required
+def api_labels_queue():
+    model     = request.args.get("model", "vader").lower()
+    limit     = int(request.args.get("limit", 20))
+    annotator = session.get("username", "anonymous")
+    try:
+        queue = simulator.get_labeling_queue(model, annotator, limit)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"queue": queue, "annotator": annotator, "model": model})
+
+
+@app.route("/api/labels", methods=["POST"])
+@login_required
+def api_labels_submit():
+    payload = request.get_json(force=True) or {}
+    annotator = session.get("username", "anonymous")
+    try:
+        result = simulator.submit_label(
+            tweet_id=payload["tweet_id"],
+            tweet=payload.get("tweet", ""),
+            ticker=payload.get("ticker", ""),
+            trading_date=payload.get("trading_date", ""),
+            label=payload["label"],
+            annotator=annotator,
+            model=payload.get("model", "vader"),
+            model_prediction=payload.get("model_prediction"),
+        )
+    except KeyError as e:
+        return jsonify({"error": f"missing field: {e}"}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok", **result})
+
+
+@app.route("/api/labels/stats")
+@login_required
+def api_labels_stats():
+    annotator = session.get("username", "anonymous")
+    try:
+        stats = simulator.label_stats(annotator)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"annotator": annotator, **stats})
 
 
 # ------------------------------------------------------------------

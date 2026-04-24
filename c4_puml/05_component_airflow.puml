@@ -1,0 +1,55 @@
+@startuml C4_Component_AirflowScheduler
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+title C4 Level 3 — Component: Airflow Scheduler (sentiment_retrain_pipeline DAG)
+
+' ── External elements ──────────────────────────────────────────────
+ContainerDb_Ext(localFs,      "Local File Store",       "Drift CSVs, finetuned model checkpoint")
+Container_Ext(mlflowServer,   "MLflow Tracking Server", "Experiments + Model Registry")
+System_Ext(huggingface,       "Hugging Face Hub",       "FinBERT base weights")
+System_Ext(supabase,          "Supabase",               "human_labels_live (live gold labels)")
+
+' ── Components (DAG tasks) ─────────────────────────────────────────
+Container_Boundary(airflowSched, "Airflow Scheduler — sentiment_retrain_pipeline DAG (02:00 UTC daily)") {
+
+    Component(checkDrift, "check_drift",
+        "Airflow ShortCircuitOperator",
+        "Reads drift_flags_{model}.csv for vader/finbert/gpt over last 7 days. Triggers downstream if ≥30% of recent dates have any of: drift_flag, volume_spike_flag, weak_signal_flag, divergence_flag.")
+
+    Component(retrainFinbert, "retrain_finbert",
+        "Airflow PythonOperator",
+        "Calls FinBERTFineTuner.run(epochs=1, batch_size=8, max_samples=2000). Uses VADER silver + 200 CSV gold + live human_labels_live (majority vote). Pushes model_path to XCom.")
+
+    Component(evalChallenger, "evaluate_challenger",
+        "Airflow PythonOperator",
+        "Sets MLflow experiment, opens parent run, instantiates FinBERTModel from XCom path, runs inference, evaluates against human labels. Logs challenger_f1 + accuracy + f1_macro etc.")
+
+    Component(compareChampion, "compare_champion",
+        "Airflow PythonOperator",
+        "Loads current Production model from MLflow Registry. Reads metrics (f1_macro / val_f1 / challenger_f1). Computes challenger_wins=challenger_f1 > champion_f1. Pushes to XCom.")
+
+    Component(promoteModel, "promote_if_better",
+        "Airflow PythonOperator",
+        "If challenger_wins: registers fine-tuned model as new version, archives current Production, transitions challenger to Production. Otherwise no-op.")
+}
+
+' ── DAG flow ───────────────────────────────────────────────────────
+Rel(checkDrift,      retrainFinbert,  "if drift detected → continue")
+Rel(retrainFinbert,  evalChallenger,  "model_path via XCom")
+Rel(evalChallenger,  compareChampion, "challenger_f1 via XCom")
+Rel(compareChampion, promoteModel,    "challenger_wins via XCom")
+
+' ── Tasks → externals ──────────────────────────────────────────────
+Rel(checkDrift,      localFs,      "Reads results/drift_flags_{model}.csv")
+Rel(retrainFinbert,  localFs,      "Writes models/finbert_finetuned/best/")
+Rel(retrainFinbert,  huggingface,  "Downloads FinBERT base weights",          "HTTPS")
+Rel(retrainFinbert,  supabase,     "SELECT human_labels_live for gold pool", "Supabase SDK")
+Rel(retrainFinbert,  mlflowServer, "Logs retrain parent + nested run",        "MLflow SDK")
+Rel(evalChallenger,  localFs,      "Reads test parquet + human_labels CSV")
+Rel(evalChallenger,  mlflowServer, "Logs evaluate parent + nested run",       "MLflow SDK")
+Rel(compareChampion, mlflowServer, "Reads Production model metrics",          "MLflow SDK")
+Rel(promoteModel,    mlflowServer, "Registers new version, transitions stage","MLflow SDK")
+Rel(promoteModel,    localFs,      "Reads finetuned checkpoint to register")
+
+@enduml

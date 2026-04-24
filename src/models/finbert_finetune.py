@@ -13,6 +13,8 @@ Label mapping (matches ProsusAI/finbert output order):
   Hold → neutral  (id 2)
 """
 import logging
+import os
+from collections import Counter
 from pathlib import Path
 
 import mlflow
@@ -56,6 +58,52 @@ class _TweetDataset(torch.utils.data.Dataset):
         return item
 
 
+def _load_live_human_labels() -> pd.DataFrame:
+    """Pull human labels collected via the dashboard from Supabase.
+
+    Multiple annotators may label the same tweet — resolve by majority vote;
+    drop ties and any label not in LABEL2ID. Returns a DataFrame with
+    columns ['Tweet', 'label']. Returns empty DataFrame if Supabase is
+    unreachable or the table is missing.
+    """
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    if not (url and key):
+        log.info("SUPABASE_URL/KEY not set — skipping live human labels.")
+        return pd.DataFrame(columns=["Tweet", "label"])
+
+    try:
+        from supabase import create_client
+        client = create_client(url, key)
+        rows = client.table("human_labels_live").select("tweet_id,tweet,label").execute().data or []
+    except Exception as e:
+        log.warning("Could not fetch live human labels from Supabase: %s", e)
+        return pd.DataFrame(columns=["Tweet", "label"])
+
+    if not rows:
+        return pd.DataFrame(columns=["Tweet", "label"])
+
+    by_tweet: dict[int, dict] = {}
+    for r in rows:
+        tid = r["tweet_id"]
+        bucket = by_tweet.setdefault(tid, {"tweet": r["tweet"], "labels": []})
+        bucket["labels"].append(r["label"])
+
+    out = []
+    for tid, bucket in by_tweet.items():
+        valid = [lbl for lbl in bucket["labels"] if lbl in LABEL2ID]
+        if not valid:
+            continue
+        counts = Counter(valid).most_common()
+        if len(counts) > 1 and counts[0][1] == counts[1][1]:
+            continue  # tie — drop
+        out.append({"Tweet": bucket["tweet"], "label": counts[0][0]})
+
+    df = pd.DataFrame(out, columns=["Tweet", "label"])
+    log.info("Loaded %d live human labels (after majority vote) from Supabase", len(df))
+    return df
+
+
 def _vader_label(text: str) -> str | None:
     vader = SentimentIntensityAnalyzer()
     tokens = str(text).split()
@@ -89,17 +137,28 @@ class FinBERTFineTuner:
         train_df["label"] = train_df["Tweet"].apply(_vader_label)
         silver = train_df[["Tweet", "label"]].dropna()
 
-        # --- gold labels from human annotation ---
-        gold_parts = []
+        # --- gold labels from human annotation (CSV seed + live dashboard) ---
+        gold_frames: list[pd.DataFrame] = []
         if HUMAN_LABELS.exists():
             human_df = pd.read_csv(HUMAN_LABELS)
-            # handle both column name variants
             if "final_label" in human_df.columns:
                 human_df = human_df.rename(columns={"final_label": "label"})
             human_df = human_df[["Tweet", "label"]].dropna()
             human_df = human_df[human_df["label"].isin(LABEL2ID)]
-            log.info("Loaded %d gold human labels (repeated x%d)", len(human_df), GOLD_REPEAT)
-            gold_parts = [human_df] * GOLD_REPEAT
+            log.info("Loaded %d gold human labels from CSV seed", len(human_df))
+            gold_frames.append(human_df)
+
+        live_df = _load_live_human_labels()
+        if not live_df.empty:
+            gold_frames.append(live_df)
+
+        gold_parts: list[pd.DataFrame] = []
+        if gold_frames:
+            gold_all = pd.concat(gold_frames, ignore_index=True).drop_duplicates(
+                subset=["Tweet"], keep="last"  # live labels override CSV on conflict
+            )
+            log.info("Total gold human labels: %d (repeated x%d)", len(gold_all), GOLD_REPEAT)
+            gold_parts = [gold_all] * GOLD_REPEAT
 
         combined = pd.concat([silver, *gold_parts], ignore_index=True)
         combined = combined[combined["label"].isin(LABEL2ID)]

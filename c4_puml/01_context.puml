@@ -1,0 +1,35 @@
+@startuml C4_Context_StockSentiment
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+LAYOUT_WITH_LEGEND()
+title C4 Level 1 — System Context: Stock Sentiment Analysis System
+
+' ── People ─────────────────────────────────────────────────────────
+Person(investor,     "Retail Investor",   "Views sentiment insights and live portfolio simulation via the web dashboard.")
+Person(mlEngineer,   "ML Engineer",       "Runs the pipeline CLI, tunes hyperparameters, monitors MLflow experiments.")
+Person(dataEngineer, "Data Engineer",     "Seeds processed data into Supabase and manages preprocessing quality.")
+Person(sysAdmin,     "System Admin",      "Deploys Docker containers, configures env vars, monitors Airflow DAGs.")
+
+' ── Main System ────────────────────────────────────────────────────
+System(system, "Stock Sentiment Analysis System", "Classifies tweet sentiment per ticker (AAPL/TSLA/TSM), aggregates signals, detects drift, serves insights on a Bloomberg-style dashboard, and auto-retrains models when drift is detected.")
+
+' ── External Systems ───────────────────────────────────────────────
+System_Ext(supabase,    "Supabase",          "Managed cloud PostgreSQL + Auth. Stores users, aggregated results, drift flags, live simulation state.")
+System_Ext(huggingface, "Hugging Face Hub",  "Hosts pre-trained FinBERT weights (ProsusAI/finbert) downloaded at runtime.")
+System_Ext(ollama,      "Ollama",            "OpenAI-compatible local LLM inference server running gemma3:4b. Default free backend.")
+System_Ext(openaiApi,   "OpenAI API",        "Optional cloud LLM (GPT-4o-mini). Higher quality, ~$5-15 per full pipeline run.")
+System_Ext(csvData,     "Static Data Files", "Raw input: tweets.csv (~53k tweets), stock_prices.csv (OHLCV), human_labels/lebeled.csv (200 gold-labeled tweets).")
+
+' ── Relationships ──────────────────────────────────────────────────
+Rel(investor,     system, "Views sentiment dashboard, runs live simulation", "HTTPS")
+Rel(mlEngineer,   system, "Runs pipeline CLI, monitors MLflow",              "CLI / Browser")
+Rel(dataEngineer, system, "Seeds data into Supabase, monitors preprocessing","CLI / Browser")
+Rel(sysAdmin,     system, "Deploys via Docker Compose, manages Airflow",     "Terminal")
+
+Rel(system, supabase,    "Reads/writes users, results, drift flags, sim state", "Supabase SDK / REST")
+Rel(system, huggingface, "Downloads ProsusAI/finbert weights",                  "HTTPS")
+Rel(system, ollama,      "Sends tweet batches for LLM classification",          "HTTP / OpenAI-compat")
+Rel(system, openaiApi,   "Optional: sends batches to GPT-4o-mini",              "HTTPS / OpenAI SDK")
+Rel(system, csvData,     "Reads raw tweets, prices, gold labels",               "File I/O")
+
+@enduml

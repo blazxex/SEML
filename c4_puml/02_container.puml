@@ -1,0 +1,60 @@
+@startuml C4_Container_StockSentiment
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+title C4 Level 2 — Containers: Stock Sentiment Analysis System
+
+' ── People ─────────────────────────────────────────────────────────
+Person(investor,   "Retail Investor", "Browses sentiment dashboard.")
+Person(mlEngineer, "ML Engineer",     "Runs CLI, monitors MLflow.")
+Person(sysAdmin,   "System Admin",    "Manages Airflow DAGs.")
+
+' ── External Systems ───────────────────────────────────────────────
+System_Ext(supabase,    "Supabase",         "Cloud Postgres + Auth.")
+System_Ext(huggingface, "Hugging Face Hub", "FinBERT model weights.")
+System_Ext(ollama,      "Ollama",           "Local LLM inference (gemma3:4b).")
+System_Ext(openaiApi,   "OpenAI API",       "Optional GPT-4o-mini.")
+
+' ── System Boundary ────────────────────────────────────────────────
+System_Boundary(system, "Stock Sentiment Analysis System") {
+
+    Container(dashboard, "Flask Dashboard", "Python 3.11, Flask 3.0, Gunicorn, Chart.js, Bootstrap 5", "Web UI: ticker/date selectors, sentiment-vs-price charts, drift alerts, model comparison, live portfolio simulation, manual labeling panel.")
+
+    Container(mlflowServer, "MLflow Tracking Server", "Python 3.11, MLflow 2.13+", "Stores experiment runs, params, metrics, artifacts. Hosts model registry with champion/challenger promotion.")
+
+    Container(airflowWeb, "Airflow Webserver", "Apache Airflow 2.9.3", "Web UI for monitoring DAG runs and task logs. Manual DAG triggering.")
+
+    Container(airflowSched, "Airflow Scheduler", "Apache Airflow 2.9.3, Python 3.11", "Executes daily retrain DAG (02:00 UTC): check_drift → retrain_finbert → evaluate_challenger → compare_champion → promote_if_better.")
+
+    ContainerDb(airflowDb, "Airflow Metadata DB", "PostgreSQL 15-alpine", "DAG state, task instance history, XCom values, scheduler heartbeats.")
+
+    Container(mlPipeline, "ML Pipeline", "Python 3.11, PyTorch 2.3, Transformers 4.41, scikit-learn, pandas, MLflow SDK", "CLI orchestrator (run_pipeline.py). Runs preprocessing → inference (VADER/FinBERT/GPT) → aggregation → drift detection → evaluation → MLflow logging.")
+
+    ContainerDb(localFs, "Local File Store", "Parquet, CSV, File System", "Raw CSVs, processed parquets, inference result CSVs, aggregated CSVs, drift flag CSVs, MLflow artifacts (./mlruns/).")
+}
+
+' ── User → Container ───────────────────────────────────────────────
+Rel(investor,   dashboard,    "Views dashboard, labels tweets, runs simulation", "HTTPS / Browser")
+Rel(mlEngineer, mlPipeline,   "Runs pipeline CLI with flags",                    "Terminal")
+Rel(mlEngineer, mlflowServer, "Views experiments, model registry",               "HTTP :5000")
+Rel(sysAdmin,   airflowWeb,   "Monitors and triggers DAGs",                      "HTTP :8082")
+
+' ── Container → Container ──────────────────────────────────────────
+Rel(dashboard,    supabase,     "Auth, reads results / drift / sim state, writes human labels", "Supabase SDK")
+Rel(dashboard,    localFs,      "Fallback: reads aggregated CSVs",                              "File I/O")
+Rel(dashboard,    mlflowServer, "Reads model metadata for comparison view",                     "HTTP :5000")
+
+Rel(mlPipeline, localFs,      "Reads/writes parquets and CSVs",          "File I/O")
+Rel(mlPipeline, mlflowServer, "Logs runs, metrics, artifacts",            "MLflow SDK")
+Rel(mlPipeline, huggingface,  "Downloads FinBERT weights",                "HTTPS")
+Rel(mlPipeline, ollama,       "Sends tweet batches",                      "HTTP")
+Rel(mlPipeline, openaiApi,    "Optional GPT-4o-mini classification",      "HTTPS")
+
+Rel(airflowSched, localFs,      "Reads drift CSVs, writes retrained model",                "File I/O")
+Rel(airflowSched, mlflowServer, "Loads champion F1, registers and promotes challenger",   "MLflow SDK")
+Rel(airflowSched, supabase,     "Pulls live human labels for retrain gold pool",          "Supabase SDK")
+Rel(airflowSched, huggingface,  "Downloads FinBERT base for fine-tuning",                  "HTTPS")
+Rel(airflowSched, airflowDb,    "DAG state, XCom values",                                  "PostgreSQL")
+Rel(airflowWeb,   airflowDb,    "DAG and task run state",                                  "PostgreSQL")
+
+@enduml

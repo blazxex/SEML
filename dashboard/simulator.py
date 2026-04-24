@@ -168,3 +168,107 @@ def get_state(model: str) -> dict:
     db = get_client()
     result = db.table("sim_state").select("*").eq("model", model).execute()
     return result.data[0] if result.data else {}
+
+
+# ----------------------------------------------------------------------
+# Manual labeling support (human-in-the-loop)
+# ----------------------------------------------------------------------
+
+_test_df_cache: pd.DataFrame | None = None
+
+
+def _load_test_df() -> pd.DataFrame:
+    global _test_df_cache
+    if _test_df_cache is None:
+        df = pd.read_parquet(PROCESSED_DIR / "tweets_test.parquet")
+        df.index.name = "tweet_id"
+        df = df.reset_index()
+        df["Trading Date"] = pd.to_datetime(df["Trading Date"]).dt.strftime("%Y-%m-%d")
+        _test_df_cache = df
+    return _test_df_cache
+
+
+def get_labeling_queue(model: str, annotator: str, limit: int = 20) -> list[dict]:
+    """Return up to `limit` tweets from the portion already processed by the
+    simulator, excluding tweets this annotator has already labeled."""
+    db = get_client()
+
+    state = db.table("sim_state").select("position").eq("model", model).execute()
+    position = state.data[0]["position"] if state.data else 0
+    if position <= 0:
+        return []
+
+    df = _load_test_df().iloc[:position]
+
+    # Skip tweets this annotator has already labeled
+    labeled = (
+        db.table("human_labels_live")
+        .select("tweet_id")
+        .eq("annotator", annotator)
+        .execute()
+    )
+    labeled_ids = {row["tweet_id"] for row in (labeled.data or [])}
+    if labeled_ids:
+        df = df[~df["tweet_id"].isin(labeled_ids)]
+
+    if df.empty:
+        return []
+
+    sample = df.sample(n=min(limit, len(df)), random_state=None)
+
+    queue = []
+    for _, row in sample.iterrows():
+        tid = int(row["tweet_id"])
+        queue.append({
+            "tweet_id":         tid,
+            "tweet":            str(row["Tweet"]),
+            "ticker":           str(row.get("Stock Name", "")),
+            "trading_date":     str(row["Trading Date"]),
+            "model_prediction": _get_label_from_results(model, tid) if model != "vader" else _vader_label(str(row["Tweet"])),
+        })
+    return queue
+
+
+def submit_label(
+    tweet_id: int,
+    tweet: str,
+    ticker: str,
+    trading_date: str,
+    label: str,
+    annotator: str,
+    model: str,
+    model_prediction: str | None = None,
+) -> dict:
+    """Upsert a human label into Supabase. One row per (tweet_id, annotator)."""
+    if label not in ("Buy", "Sell", "Hold", "No Opinion"):
+        raise ValueError(f"Invalid label: {label}")
+
+    db = get_client()
+    db.table("human_labels_live").upsert({
+        "tweet_id":         int(tweet_id),
+        "tweet":            tweet,
+        "ticker":           ticker or None,
+        "trading_date":     trading_date or None,
+        "label":            label,
+        "annotator":        annotator,
+        "model":            model,
+        "model_prediction": model_prediction,
+    }, on_conflict="tweet_id,annotator").execute()
+
+    return {"tweet_id": tweet_id, "label": label, "annotator": annotator}
+
+
+def label_stats(annotator: str) -> dict:
+    db = get_client()
+    mine = db.table("human_labels_live").select("label", count="exact").eq("annotator", annotator).execute()
+    total_all = db.table("human_labels_live").select("id", count="exact").execute()
+
+    by_label = {"Buy": 0, "Sell": 0, "Hold": 0, "No Opinion": 0}
+    for row in (mine.data or []):
+        by_label[row["label"]] = by_label.get(row["label"], 0) + 1
+
+    return {
+        "user_total":     int(mine.count or 0),
+        "all_users_total": int(total_all.count or 0),
+        "by_label":       by_label,
+    }

@@ -137,6 +137,7 @@ function getTicker() { return document.getElementById('tickerSelect').value; }
 function getModel()  { return document.getElementById('modelSelect').value;  }
 
 let _dayPanelOffcanvas = null;
+let _tweetPanelOffcanvas = null;
 
 async function openDayPanel(ticker, date) {
     const body = document.getElementById('dayPanelBody');
@@ -149,6 +150,9 @@ async function openDayPanel(ticker, date) {
     }
     _dayPanelOffcanvas.show();
 
+    // Open the tweet list on the left in parallel
+    openTweetPanel(ticker, date);
+
     try {
         const res = await fetch(`/api/day?ticker=${ticker}&date=${date}`);
         if (!res.ok) {
@@ -160,6 +164,100 @@ async function openDayPanel(ticker, date) {
         renderDayPanel(data);
     } catch(e) {
         body.innerHTML = `<div class="text-danger text-center py-5 px-3">Error: ${e.message}</div>`;
+    }
+}
+
+async function openTweetPanel(ticker, date) {
+    const body = document.getElementById('tweetPanelBody');
+    document.getElementById('tpTicker').textContent = `${ticker} — Tweets`;
+    document.getElementById('tpDate').textContent   = date;
+    document.getElementById('tpCount').textContent  = '';
+    body.innerHTML = '<div class="text-secondary text-center py-5">Loading…</div>';
+
+    if (!_tweetPanelOffcanvas) {
+        _tweetPanelOffcanvas = new bootstrap.Offcanvas(document.getElementById('tweetPanel'));
+    }
+    _tweetPanelOffcanvas.show();
+
+    try {
+        const res = await fetch(`/api/tweets?ticker=${ticker}&date=${date}&limit=50`);
+        if (!res.ok) {
+            const d = await res.json();
+            body.innerHTML = `<div class="text-danger text-center py-5 px-3">${d.error || 'No tweets.'}</div>`;
+            return;
+        }
+        const data = await res.json();
+        renderTweetPanel(data);
+    } catch(e) {
+        body.innerHTML = `<div class="text-danger text-center py-5 px-3">Error: ${e.message}</div>`;
+    }
+}
+
+function renderTweetPanel(data) {
+    document.getElementById('tpCount').textContent =
+        `${data.count}${data.total_for_day && data.total_for_day > data.count ? ' / ' + data.total_for_day : ''} tweets`;
+
+    if (!data.tweets || data.tweets.length === 0) {
+        document.getElementById('tweetPanelBody').innerHTML =
+            '<div class="text-secondary text-center py-5">No tweets for this date.</div>';
+        return;
+    }
+
+    const labelColor = (lbl) => ({
+        'Buy':        '#3fb950',
+        'Sell':       '#f85149',
+        'Hold':       '#e3b341',
+        'No Opinion': '#8b949e',
+    }[lbl] || '#8b949e');
+
+    const html = data.tweets.map((t) => {
+        const preds = Object.entries(t.predictions || {})
+            .map(([m, lbl]) => `<span class="badge me-1 mb-1" style="background:${labelColor(lbl)};color:#0d1117;font-weight:600;">${m}: ${lbl}</span>`)
+            .join('');
+        const escTweet = t.tweet
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `
+            <div class="tweet-item mb-2 p-2" style="background:#161b22;border:1px solid #30363d;border-radius:6px;">
+                <div style="font-size:.85rem;line-height:1.45;color:#e6edf3;">${escTweet}</div>
+                <div class="mt-2" style="font-size:.7rem;">${preds}</div>
+                <div class="mt-1 d-flex gap-1">
+                    <button class="btn btn-success btn-sm py-0 px-1" style="font-size:.7rem;" onclick="quickLabel(${t.tweet_id}, 'Buy', this)">Buy</button>
+                    <button class="btn btn-danger  btn-sm py-0 px-1" style="font-size:.7rem;" onclick="quickLabel(${t.tweet_id}, 'Sell', this)">Sell</button>
+                    <button class="btn btn-warning btn-sm py-0 px-1" style="font-size:.7rem;" onclick="quickLabel(${t.tweet_id}, 'Hold', this)">Hold</button>
+                    <button class="btn btn-secondary btn-sm py-0 px-1" style="font-size:.7rem;" onclick="quickLabel(${t.tweet_id}, 'No Opinion', this)">N/O</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('tweetPanelBody').innerHTML = html;
+    // Stash by tweet_id so quickLabel can retrieve full row
+    window._tweetPanelTweets = Object.fromEntries(data.tweets.map(t => [t.tweet_id, t]));
+}
+
+async function quickLabel(tweetId, label, btn) {
+    const t = (window._tweetPanelTweets || {})[tweetId];
+    if (!t) return;
+    const original = btn.parentElement.innerHTML;
+    btn.parentElement.innerHTML = '<span class="text-secondary small">Saving…</span>';
+    try {
+        const res = await fetch('/api/labels', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tweet_id:         t.tweet_id,
+                tweet:            t.tweet,
+                ticker:           t.ticker,
+                trading_date:     t.trading_date,
+                label,
+                model:            getModel(),
+                model_prediction: (t.predictions || {})[getModel()] || null,
+            }),
+        });
+        if (!res.ok) { btn.parentElement.innerHTML = original; return; }
+        btn.parentElement.innerHTML = `<span class="text-success small">✓ Labeled as ${label}</span>`;
+    } catch (e) {
+        btn.parentElement.innerHTML = original;
     }
 }
 

@@ -1,0 +1,52 @@
+@startuml C4_Component_Dashboard
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+LAYOUT_WITH_LEGEND()
+title C4 Level 3 — Component: Flask Dashboard
+
+' ── Actors ─────────────────────────────────────────────────────────
+Person(investor, "Retail Investor", "Browses sentiment, labels tweets, runs simulation.")
+
+' ── External elements ──────────────────────────────────────────────
+System_Ext(supabase,      "Supabase",                "users, aggregated_results, drift_flags, sim_state, sim_results, human_labels_live")
+ContainerDb_Ext(localFs,  "Local File Store",        "results/aggregated_*.csv, drift_flags_*.csv, results/{model}_results.csv, data/processed/tweets_test.parquet")
+Container_Ext(mlflowServer, "MLflow Tracking Server", "Model registry & metrics")
+
+' ── Components ─────────────────────────────────────────────────────
+Container_Boundary(dashboard, "Flask Dashboard") {
+
+    Component(authHandler,     "Auth Handler",           "Flask session, bcrypt", "Validates username/password against Supabase users table. Issues session cookies.")
+
+    Component(chartController, "Chart Controller",       "Flask routes",           "Serves /api/sentiment, /api/drift, /api/compare, /api/day, /api/live. Reads from Supabase, falls back to local CSVs.")
+
+    Component(tweetPanel,      "Tweet Panel API",        "Flask + pandas",         "Serves /api/tweets — reads tweets_test.parquet, joins with results CSVs to attach each model's prediction. Powers the left tweet drawer.")
+
+    Component(labelingApi,     "Labeling API",           "Flask + Supabase SDK",   "Serves /api/labels/queue, POST /api/labels, /api/labels/stats. Persists human-in-the-loop labels for retrain.")
+
+    Component(simEngine,       "Live Simulation Engine", "Python thread + pandas", "Background worker that walks tweets_test.parquet, classifies via the active model, aggregates per (ticker, date), writes sim_results to Supabase.")
+
+    Component(simControl,      "Simulation Control API", "Flask routes",           "/api/sim/start /pause /reset /speed /state. Mutates sim_state in Supabase.")
+
+    Component(staticAssets,    "Static Assets / Templates", "Jinja2, Bootstrap 5, Chart.js", "index.html, login.html, charts.js. Renders dual-offcanvas (left tweets + right day detail) and labeling panel.")
+}
+
+' ── User flows ─────────────────────────────────────────────────────
+Rel(investor, staticAssets,    "Loads dashboard UI",                                "HTTPS")
+Rel(investor, authHandler,     "Logs in",                                           "POST /login")
+Rel(investor, chartController, "Selects ticker/model/date",                         "GET /api/*")
+Rel(investor, tweetPanel,      "Clicks chart point → opens tweet drawer",          "GET /api/tweets")
+Rel(investor, labelingApi,     "Labels tweets via panel or inline drawer buttons", "POST /api/labels")
+Rel(investor, simControl,      "Starts/pauses live simulation",                    "POST /api/sim/*")
+
+' ── Component → external ───────────────────────────────────────────
+Rel(authHandler,     supabase, "SELECT users WHERE username=?",         "Supabase SDK")
+Rel(chartController, supabase, "Reads aggregated_results, drift_flags", "Supabase SDK")
+Rel(chartController, localFs,  "Fallback: reads aggregated CSVs",       "File I/O")
+Rel(tweetPanel,      localFs,  "Reads tweets_test.parquet + results/{model}_results.csv", "File I/O")
+Rel(labelingApi,     supabase, "INSERT/SELECT human_labels_live",       "Supabase SDK")
+Rel(simEngine,       supabase, "Reads/writes sim_state and sim_results","Supabase SDK")
+Rel(simEngine,       localFs,  "Reads tweets_test.parquet for replay",  "File I/O")
+Rel(simControl,      simEngine,"Starts background thread, mutates state", "in-process")
+Rel(chartController, mlflowServer, "Reads model metadata for compare view", "HTTP :5000")
+
+@enduml

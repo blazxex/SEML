@@ -84,3 +84,22 @@ create table if not exists drift_flags (
 
 create index if not exists idx_agg_ticker_model on aggregated_results(ticker, model);
 create index if not exists idx_drift_ticker_model on drift_flags(ticker, model);
+
+-- Live human labels collected from the dashboard labeling panel.
+-- One row per (tweet_id, annotator) — each user can label the same tweet at most once.
+-- Retrain DAG aggregates these via majority vote.
+create table if not exists human_labels_live (
+    id bigserial primary key,
+    tweet_id int not null,
+    tweet text not null,
+    ticker text,
+    trading_date date,
+    label text not null check (label in ('Buy','Sell','Hold','No Opinion')),
+    annotator text not null,
+    model_prediction text,
+    model text,
+    created_at timestamptz default now(),
+    unique (tweet_id, annotator)
+);
+create index if not exists idx_human_labels_live_created on human_labels_live(created_at desc);
+create index if not exists idx_human_labels_live_tweet on human_labels_live(tweet_id);
